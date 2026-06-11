@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta name="theme-color" content="#1D9E75"/>
+  <meta name="theme-color" content="#CC0000"/>
+  <style>body{background:#f9fafb}</style>
   <title>KickCoach ⚽</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -61,7 +62,7 @@ const fmtAgo   = (ts) => {
 // ─── UI Components ──────────────────────────────────────────────────
 const Spinner = () => (
   <div className="flex items-center justify-center p-12">
-    <div className="w-8 h-8 border-4 border-green-200 border-t-green-600 rounded-full animate-spin"/>
+    <div className="w-8 h-8 border-4 border-red-200 border-t-red-600 rounded-full animate-spin"/>
   </div>
 );
 
@@ -81,24 +82,24 @@ const Modal = ({title, onClose, children, wide=false}) => (
 const Inp = ({label, ...p}) => (
   <div className="mb-3">
     {label && <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>}
-    <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white" {...p}/>
+    <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white" {...p}/>
   </div>
 );
 const Sel = ({label, children, ...p}) => (
   <div className="mb-3">
     {label && <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>}
-    <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white" {...p}>{children}</select>
+    <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white" {...p}>{children}</select>
   </div>
 );
 const Txt = ({label, rows=3, ...p}) => (
   <div className="mb-3">
     {label && <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>}
-    <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none" rows={rows} {...p}/>
+    <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none" rows={rows} {...p}/>
   </div>
 );
 const Btn = ({variant='primary', size='md', className='', children, ...p}) => {
   const v = {
-    primary:   'bg-green-600 hover:bg-green-700 text-white',
+    primary:   'bg-red-600 hover:bg-red-700 text-white',
     secondary: 'bg-gray-100 hover:bg-gray-200 text-gray-700',
     danger:    'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200',
     purple:    'bg-purple-600 hover:bg-purple-700 text-white',
@@ -107,7 +108,7 @@ const Btn = ({variant='primary', size='md', className='', children, ...p}) => {
   const s = size==='sm' ? 'px-3 py-1.5 text-xs' : size==='lg' ? 'px-5 py-2.5 text-base' : 'px-4 py-2 text-sm';
   return <button className={`${v[variant]||v.primary} ${s} rounded-lg font-medium transition-colors disabled:opacity-40 ${className}`} {...p}>{children}</button>;
 };
-const Avatar = ({name, color='#1D9E75', size='md'}) => {
+const Avatar = ({name, color='#CC0000', size='md'}) => {
   const s = size==='sm'?'w-7 h-7 text-xs':size==='lg'?'w-12 h-12 text-lg':'w-9 h-9 text-sm';
   return <div className={`${s} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0`} style={{background:color}}>{initials(name)}</div>;
 };
@@ -115,7 +116,7 @@ const Avatar = ({name, color='#1D9E75', size='md'}) => {
 // ─── Toast ──────────────────────────────────────────────────────────
 function Toast({msg, type='success', onClose}) {
   useEffect(() => { const t=setTimeout(onClose,3200); return ()=>clearTimeout(t); }, []);
-  const c = {success:'bg-green-600', error:'bg-red-600', info:'bg-blue-600', warning:'bg-amber-500'};
+  const c = {success:'bg-red-600', error:'bg-red-600', info:'bg-blue-600', warning:'bg-amber-500'};
   return (
     <div className={`${c[type]||c.info} text-white px-4 py-3 rounded-xl shadow-lg text-sm flex items-center gap-3`}>
       <span className="flex-1">{msg}</span>
@@ -154,12 +155,14 @@ function LoginPage() {
   const [pw,     setPw]     = useState('');
   const [name,   setName]   = useState('');
   const [role,   setRole]   = useState('player');
-  const [teamId, setTeamId] = useState('');
-  const [teams,  setTeams]  = useState([]);
   const [loading,setLoading]= useState(false);
   const [msg,    setMsg]    = useState('');
 
-  useEffect(() => { getDocs_(col('teams').orderBy('name')).then(setTeams).catch(()=>{}); }, []);
+  const ROLES = [
+    {v:'player',  l:'Spieler',  icon:'⚽', desc:'Trainings, Wellness, Chat'},
+    {v:'trainer', l:'Trainer',  icon:'📋', desc:'Kader, Training, Taktik'},
+    {v:'vorstand',l:'Vorstand', icon:'🏟️',desc:'Vollzugriff, Teams & Verwaltung'},
+  ];
 
   const login = async (e) => {
     e.preventDefault(); setMsg(''); setLoading(true);
@@ -171,14 +174,15 @@ function LoginPage() {
   const register = async (e) => {
     e.preventDefault(); setMsg(''); setLoading(true);
     try {
-      if (role !== 'admin' && !teamId) { setMsg('Bitte ein Team wählen.'); setLoading(false); return; }
       const {user} = await auth.createUserWithEmailAndPassword(email, pw);
       const existing = await col('users').limit(2).get();
       const isFirst  = existing.docs.filter(d=>d.id!==user.uid).length === 0;
+      // First user always becomes Vorstand
+      const finalRole = isFirst ? 'vorstand' : role;
       await col('users').doc(user.uid).set({
         name, email,
-        role: isFirst ? 'admin' : role,
-        teamId: isFirst ? '' : (role==='admin' ? '' : teamId),
+        role: finalRole,
+        teamId: '',   // Team wird nach Anmeldung gewählt
         color: randColor(), createdAt: ts()
       });
     } catch(err) { setMsg(err.message); }
@@ -186,18 +190,18 @@ function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
           <div className="text-5xl mb-2">⚽</div>
           <h1 className="text-3xl font-bold text-white">KickCoach</h1>
-          <p className="text-green-200 text-sm mt-1">Dein Vereins-Manager</p>
+          <p className="text-red-200 text-sm mt-1">Dein Vereins-Manager</p>
         </div>
         <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
           <div className="flex border-b">
             {[['login','🔐 Anmelden'],['register','✍️ Registrieren']].map(([v,l])=>(
               <button key={v} onClick={()=>{setTab(v);setMsg('');}}
-                className={`flex-1 py-3.5 text-sm font-semibold transition-colors ${tab===v?'text-green-700 border-b-2 border-green-700 bg-green-50':'text-gray-500 hover:text-gray-700'}`}>
+                className={`flex-1 py-3.5 text-sm font-semibold transition-colors ${tab===v?'text-red-700 border-b-2 border-red-700 bg-red-50':'text-gray-500 hover:text-gray-700'}`}>
                 {l}
               </button>
             ))}
@@ -205,23 +209,23 @@ function LoginPage() {
           <form onSubmit={tab==='login'?login:register} className="p-5">
             {tab==='register' && <>
               <Inp label="Vollständiger Name" value={name} onChange={e=>setName(e.target.value)} placeholder="Max Mustermann" required/>
-              <Sel label="Rolle" value={role} onChange={e=>setRole(e.target.value)}>
-                <option value="player">Spieler</option>
-                <option value="trainer">Trainer</option>
-              </Sel>
-              {teams.length>0 ? (
-                <Sel label="Team" value={teamId} onChange={e=>setTeamId(e.target.value)} required={role!=='admin'}>
-                  <option value="">Team wählen…</option>
-                  {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                </Sel>
-              ) : (
-                <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-                  ℹ️ Noch keine Teams vorhanden. Erste/r Benutzer/in wird automatisch Admin und legt Teams an.
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-gray-600 mb-2">Ich bin…</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {ROLES.map(r=>(
+                    <button key={r.v} type="button" onClick={()=>setRole(r.v)}
+                      className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border-2 text-center transition-all ${role===r.v?'border-red-500 bg-red-50':'border-gray-200 bg-white hover:border-gray-300'}`}>
+                      <span className="text-xl">{r.icon}</span>
+                      <span className="text-xs font-semibold text-gray-800">{r.l}</span>
+                      <span className="text-[9px] text-gray-400 leading-tight">{r.desc}</span>
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
             </>}
             <Inp label="E-Mail" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@beispiel.de" required/>
             <Inp label="Passwort" type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••" required minLength={6}/>
+            {tab==='register'&&<p className="text-[11px] text-gray-400 mb-2">Du wählst dein Team nach der Registrierung.</p>}
             {msg && <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">{msg}</p>}
             <Btn type="submit" size="lg" className="w-full mt-1" disabled={loading}>
               {loading ? '⏳ Bitte warten…' : tab==='login' ? 'Anmelden' : 'Konto erstellen'}
@@ -234,34 +238,92 @@ function LoginPage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  TEAM AUSWAHL (nach Registrierung / wenn kein Team zugewiesen)
+// ═══════════════════════════════════════════════════════════════════
+function TeamPicker({profile, onTeamSelected}) {
+  const [teams,   setTeams]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+
+  useEffect(()=>{ getDocs_(col('teams').orderBy('name')).then(t=>{ setTeams(t); setLoading(false); }); },[]);
+
+  const pick = async (teamId) => {
+    setSaving(true);
+    await col('users').doc(profile.id).update({teamId});
+    onTeamSelected(teamId);
+  };
+
+  const ROLE_LABEL = {player:'Spieler', trainer:'Trainer', vorstand:'Vorstand'};
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-6">
+          <div className="text-5xl mb-2">⚽</div>
+          <h1 className="text-2xl font-bold text-white">Team wählen</h1>
+          <p className="text-red-200 text-sm mt-1">Hallo {profile.name} · {ROLE_LABEL[profile.role]||profile.role}</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-2xl p-5">
+          {loading ? <Spinner/> : teams.length === 0 ? (
+            <div className="text-center py-8">
+              <div className="text-4xl mb-3">🏟️</div>
+              <p className="text-sm text-gray-600 mb-2">Noch keine Teams vorhanden.</p>
+              <p className="text-xs text-gray-400">Der Vorstand muss zuerst Teams anlegen.</p>
+              <button onClick={()=>auth.signOut()} className="mt-4 text-xs text-gray-400 underline">Abmelden</button>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-gray-600 mb-4">Welchem Team gehörst du an?</p>
+              <div className="space-y-2">
+                {teams.map(t=>(
+                  <button key={t.id} onClick={()=>pick(t.id)} disabled={saving}
+                    className="w-full flex items-center gap-3 border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3.5 text-left transition-all disabled:opacity-40">
+                    <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-lg flex-shrink-0">🏟️</div>
+                    <div>
+                      <div className="text-sm font-semibold">{t.name}</div>
+                      {t.category&&<div className="text-xs text-gray-400">{t.category}</div>}
+                    </div>
+                    <div className="ml-auto text-red-500 opacity-0 group-hover:opacity-100">→</div>
+                  </button>
+                ))}
+              </div>
+              <button onClick={()=>auth.signOut()} className="mt-4 w-full text-xs text-gray-400 hover:text-gray-600 text-center">Abmelden</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  SHARED LAYOUT (Sidebar + Mobile Toggle)
 // ═══════════════════════════════════════════════════════════════════
-function Layout({profile, nav, page, setPage, onLogout, accent='green', children}) {
+function Layout({profile, nav, page, setPage, onLogout, accent='red', children}) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const ac = {
-    green:  {ring:'focus:ring-green-500', active:'bg-green-50 text-green-700 font-medium', avatar:'bg-green-100 text-green-800'},
-    blue:   {ring:'focus:ring-blue-500',  active:'bg-blue-50 text-blue-700 font-medium',   avatar:'bg-blue-100 text-blue-800'},
-    purple: {ring:'focus:ring-purple-500',active:'bg-purple-50 text-purple-700 font-medium',avatar:'bg-purple-100 text-purple-800'},
-  }[accent] || {ring:'',active:'bg-gray-100 text-gray-900 font-medium',avatar:'bg-gray-100 text-gray-800'};
 
   const SidebarContent = () => (
-    <aside className="w-52 bg-gray-50 border-r border-gray-200 flex flex-col h-full">
-      <div className="p-3 border-b border-gray-200 flex items-center gap-2.5 flex-shrink-0">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${ac.avatar}`}>
+    <aside className="w-52 bg-gray-950 flex flex-col h-full" style={{background:'#111'}}>
+      {/* Logo / Branding */}
+      <div className="px-4 py-4 border-b border-white/10 flex items-center gap-2.5 flex-shrink-0">
+        <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
           {initials(profile.name)}
         </div>
         <div className="min-w-0">
-          <div className="text-xs font-semibold text-gray-900 truncate">{profile.name}</div>
-          <div className="text-[10px] text-gray-500 capitalize">{profile.role}</div>
+          <div className="text-xs font-semibold text-white truncate">{profile.name}</div>
+          <div className="text-[10px] text-white/40">{{vorstand:'Vorstand',trainer:'Trainer',player:'Spieler'}[profile.role]||profile.role}</div>
         </div>
       </div>
-      <nav className="flex-1 p-1.5 overflow-y-auto">
+      {/* Nav */}
+      <nav className="flex-1 p-2 overflow-y-auto">
         {nav.map(({section, items}) => (
           <div key={section||'_'}>
-            {section && <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider px-2 pt-3 pb-1">{section}</div>}
+            {section && <div className="text-[10px] font-semibold text-white/30 uppercase tracking-widest px-2 pt-4 pb-1.5">{section}</div>}
             {items.map(item => (
               <button key={item.id} onClick={()=>{setPage(item.id);setMobileOpen(false);}}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] mb-0.5 transition-colors text-left ${page===item.id ? ac.active : 'text-gray-500 hover:text-gray-900 hover:bg-white'}`}>
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] mb-0.5 transition-all text-left ${page===item.id
+                  ? 'bg-red-600 text-white font-semibold shadow-sm'
+                  : 'text-white/50 hover:text-white hover:bg-white/10'}`}>
                 <span className="text-sm flex-shrink-0">{item.icon}</span>
                 <span className="truncate">{item.label}</span>
               </button>
@@ -269,28 +331,28 @@ function Layout({profile, nav, page, setPage, onLogout, accent='green', children
           </div>
         ))}
       </nav>
-      <button onClick={onLogout} className="m-2 flex items-center gap-2 px-2 py-1.5 text-xs text-gray-400 hover:text-gray-700 hover:bg-white rounded-lg transition-colors">
+      <button onClick={onLogout} className="m-2 flex items-center gap-2 px-3 py-2 text-xs text-white/30 hover:text-white/60 hover:bg-white/5 rounded-lg transition-colors">
         🚪 Abmelden
       </button>
     </aside>
   );
 
   return (
-    <div className="flex h-screen bg-white overflow-hidden">
+    <div className="flex h-screen bg-gray-50 overflow-hidden">
       {/* Desktop */}
       <div className="hidden md:flex md:flex-col md:w-52 flex-shrink-0"><SidebarContent/></div>
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={()=>setMobileOpen(false)}/>
-          <div className="relative w-52 h-full bg-white shadow-xl"><SidebarContent/></div>
+          <div className="absolute inset-0 bg-black/60" onClick={()=>setMobileOpen(false)}/>
+          <div className="relative w-52 h-full shadow-2xl"><SidebarContent/></div>
         </div>
       )}
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Mobile header */}
         <div className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
-          <button onClick={()=>setMobileOpen(true)} className="text-gray-500 hover:text-gray-900 text-xl">☰</button>
-          <span className="text-sm font-semibold">⚽ KickCoach</span>
+          <button onClick={()=>setMobileOpen(true)} className="text-gray-700 text-xl font-bold">☰</button>
+          <span className="text-sm font-bold text-gray-900">⚽ KickCoach</span>
         </div>
         <div className="flex-1 overflow-y-auto">{children}</div>
       </main>
@@ -344,7 +406,7 @@ function TrainerKader({profile, show}) {
               <div className="flex-1"><Sel label="Position" value={form.position} onChange={e=>setForm({...form,position:e.target.value})}>{POSITIONS.map(p=><option key={p}>{p}</option>)}</Sel></div>
               <div className="w-20">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Nr.</label>
-                <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-500"/>
+                <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
               </div>
             </div>
             <div className="flex gap-2 mt-1">
@@ -364,7 +426,7 @@ function TrainerKader({profile, show}) {
               <div className="space-y-1.5">
                 {grouped[pos].map(p=>(
                   <div key={p.id} className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-4 py-2.5">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#1D9E75'}}>
+                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
                       {p.number||initials(p.name)}
                     </div>
                     <div className="min-w-0">
@@ -435,7 +497,7 @@ function TrainerTraining({profile, show}) {
                 <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-100 rounded-lg p-2">
                   {drills.map(d=>(
                     <label key={d.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
-                      <input type="checkbox" checked={form.drillIds.includes(d.id)} onChange={()=>toggleDrill(d.id)} className="accent-green-600"/>
+                      <input type="checkbox" checked={form.drillIds.includes(d.id)} onChange={()=>toggleDrill(d.id)} className="accent-red-600"/>
                       {d.imageData && <img src={d.imageData} className="w-8 h-5 object-cover rounded" alt=""/>}
                       <span>{d.name}</span>
                     </label>
@@ -522,7 +584,7 @@ function Taktikboard({profile, show}) {
   const drawField=(type)=>{
     const canvas=canvasRef.current; if(!canvas) return;
     const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height, p=20;
-    ctx.fillStyle='#1a472a'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#1a1a1a'; ctx.fillRect(0,0,W,H);
     if(type==='blank') return;
     ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=1.5;
     if(type==='full'){
@@ -564,7 +626,7 @@ function Taktikboard({profile, show}) {
     if(tool==='player'){
       saveSnap(); ctx.save();ctx.fillStyle=color;ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=1.5;
       ctx.beginPath();ctx.arc(p.x,p.y,14,0,Math.PI*2);ctx.fill();ctx.stroke();
-      ctx.fillStyle=color==='#ffffff'?'#1a472a':'#fff';ctx.font='bold 10px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillStyle=color==='#ffffff'?'#1a1a1a':'#fff';ctx.font='bold 10px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
       ctx.fillText('S',p.x,p.y);ctx.restore(); return;
     }
     if(tool==='cone'){
@@ -647,13 +709,13 @@ function Taktikboard({profile, show}) {
       {/* Name + Save */}
       <div className="flex gap-2 px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0">
         <input value={drillName} onChange={e=>setDrillName(e.target.value)} placeholder="Übungsname eingeben…"
-          className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500"/>
-        <Btn size="sm" onClick={saveDrill} className={btnSaved?'bg-green-800':''}>
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-red-500"/>
+        <Btn size="sm" onClick={saveDrill} className={btnSaved?'bg-red-800':''}>
           {btnSaved?'✓ Gespeichert':'💾 Speichern'}
         </Btn>
       </div>
       {/* Canvas */}
-      <div className="flex-1 bg-[#1a472a] overflow-hidden">
+      <div className="flex-1 bg-[#1a1a1a] overflow-hidden">
         <canvas ref={canvasRef}
           style={{width:'100%',height:'100%',cursor:'crosshair',display:'block',touchAction:'none'}}
           onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}
@@ -686,7 +748,7 @@ function TrainerSpiele({profile, show}) {
     if(g.scoreHome===''||g.scoreHome===undefined) return null;
     const won = g.home ? Number(g.scoreHome)>Number(g.scoreAway) : Number(g.scoreAway)>Number(g.scoreHome);
     const draw = Number(g.scoreHome)===Number(g.scoreAway);
-    return <div className={`text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${draw?'bg-gray-100 text-gray-600':won?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{g.scoreHome}:{g.scoreAway} {draw?'U':won?'S':'N'}</div>;
+    return <div className={`text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${draw?'bg-gray-100 text-gray-600':won?'bg-red-100 text-red-700':'bg-red-100 text-red-600'}`}>{g.scoreHome}:{g.scoreAway} {draw?'U':won?'S':'N'}</div>;
   };
 
   const upcoming = games.filter(g=>g.date>=todayStr());
@@ -701,11 +763,11 @@ function TrainerSpiele({profile, show}) {
             <div className="flex gap-2"><Inp label="Datum" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/><Inp label="Zeit" type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/></div>
             <Inp label="Gegner" value={form.opponent} onChange={e=>setForm({...form,opponent:e.target.value})} placeholder="FC Musterstadt" required/>
             <Inp label="Ort" value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Sportstadion"/>
-            <label className="flex items-center gap-2 text-sm text-gray-600 mb-3 cursor-pointer"><input type="checkbox" checked={form.home} onChange={e=>setForm({...form,home:e.target.checked})} className="accent-green-600"/> Heimspiel</label>
+            <label className="flex items-center gap-2 text-sm text-gray-600 mb-3 cursor-pointer"><input type="checkbox" checked={form.home} onChange={e=>setForm({...form,home:e.target.checked})} className="accent-red-600"/> Heimspiel</label>
             <div className="flex items-center gap-2 mb-3">
-              <input type="number" min="0" placeholder="Heim" value={form.scoreHome} onChange={e=>setForm({...form,scoreHome:e.target.value})} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-500"/>
+              <input type="number" min="0" placeholder="Heim" value={form.scoreHome} onChange={e=>setForm({...form,scoreHome:e.target.value})} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
               <span className="text-gray-400 font-bold text-lg">:</span>
-              <input type="number" min="0" placeholder="Gast" value={form.scoreAway} onChange={e=>setForm({...form,scoreAway:e.target.value})} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-green-500"/>
+              <input type="number" min="0" placeholder="Gast" value={form.scoreAway} onChange={e=>setForm({...form,scoreAway:e.target.value})} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
             </div>
             <Txt label="Notizen" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows={2}/>
             <div className="flex gap-2"><Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn><Btn type="submit" className="flex-1">Speichern</Btn></div>
@@ -884,7 +946,7 @@ function TrainerBeurteilungen({profile, show}) {
                       <div className="text-xs text-gray-400">{r?`${r.date} · Ø ${r.avg}/5`:'Noch keine Beurteilung'}</div>
                     </div>
                   </div>
-                  {r&&<div className="text-xl font-bold text-green-600 flex-shrink-0">{r.avg}</div>}
+                  {r&&<div className="text-xl font-bold text-red-600 flex-shrink-0">{r.avg}</div>}
                 </div>
                 {r&&<div className="mt-2 flex gap-3">{RATING_CATS.map(cat=><div key={cat} className="text-center"><div className="text-xs font-bold">{r.scores[cat]}</div><div className="text-[9px] text-gray-400">{cat.slice(0,3)}</div></div>)}</div>}
                 {r?.notes&&<p className="text-xs text-gray-500 mt-1 italic">{r.notes}</p>}
@@ -900,13 +962,13 @@ function TrainerBeurteilungen({profile, show}) {
 // ═══════════════════════════════════════════════════════════════════
 //  CHAT (shared Trainer + Spieler)
 // ═══════════════════════════════════════════════════════════════════
-function ChatPage({profile, accent='green'}) {
+function ChatPage({profile, accent='red'}) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const bottomRef = useRef(null);
-  const sendBtnColor = accent==='blue' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700';
-  const ringColor    = accent==='blue' ? 'focus:ring-blue-500' : 'focus:ring-green-500';
-  const bubbleColor  = accent==='blue' ? 'bg-blue-600'  : 'bg-green-600';
+  const sendBtnColor = 'bg-red-600 hover:bg-red-700';
+  const ringColor    = 'focus:ring-red-500';
+  const bubbleColor  = 'bg-red-600';
 
   useEffect(()=>{
     return col('chat').where('teamId','==',profile.teamId).orderBy('createdAt')
@@ -987,11 +1049,11 @@ function TrainerApp({profile}) {
     taktikboard:    <Taktikboard profile={profile} show={show}/>,
     verletzungen:   <TrainerVerletzungen profile={profile} show={show}/>,
     beurteilungen:  <TrainerBeurteilungen profile={profile} show={show}/>,
-    chat:           <ChatPage profile={profile} accent="green"/>,
+    chat:           <ChatPage profile={profile} accent="red"/>,
   };
 
   return (
-    <Layout profile={profile} nav={nav} page={page} setPage={setPage} onLogout={()=>auth.signOut()} accent="green">
+    <Layout profile={profile} nav={nav} page={page} setPage={setPage} onLogout={()=>auth.signOut()} accent="red">
       {content[page]||null}
       <Container/>
     </Layout>
@@ -1042,7 +1104,7 @@ function PlayerTraining({profile}) {
                 {s.notes&&<p className="text-xs text-gray-600 mb-3 leading-relaxed">{s.notes}</p>}
                 <div className="flex gap-2">
                   {[
-                    {st:'attend',icon:'✓',label:'Zusagen',on:'bg-green-600 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-700'},
+                    {st:'attend',icon:'✓',label:'Zusagen',on:'bg-red-600 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-700'},
                     {st:'cancel',icon:'✕',label:'Absagen',on:'bg-red-500 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600'},
                     {st:'unsure',icon:'?', label:'Unsicher',on:'bg-amber-500 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-600'},
                   ].map(({st,icon,label,on,off})=>(
@@ -1099,10 +1161,10 @@ function PlayerWellness({profile}) {
       <h1 className="text-lg font-semibold mb-1">Wellness Check-In</h1>
       <p className="text-xs text-gray-400 mb-4">Wie geht's dir heute?</p>
       {todayEntry ? (
-        <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center mb-4">
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-5 text-center mb-4">
           <div className="text-3xl mb-1">✅</div>
-          <div className="text-sm font-semibold text-green-800">Heute bereits eingecheckt!</div>
-          <div className="text-xs text-green-600 mt-1">Ø {((todayEntry.mood+todayEntry.energy+todayEntry.sleep+todayEntry.soreness)/4).toFixed(1)}/5</div>
+          <div className="text-sm font-semibold text-red-800">Heute bereits eingecheckt!</div>
+          <div className="text-xs text-red-600 mt-1">Ø {((todayEntry.mood+todayEntry.energy+todayEntry.sleep+todayEntry.soreness)/4).toFixed(1)}/5</div>
         </div>
       ) : (
         <form onSubmit={submit} className="mb-4">
@@ -1111,19 +1173,19 @@ function PlayerWellness({profile}) {
               <div key={m.key} className="mb-4">
                 <div className="flex justify-between items-center mb-1.5">
                   <span className="text-sm font-medium text-gray-700">{m.label}</span>
-                  <span className="text-sm font-bold text-green-600">{vals[m.key]}/5</span>
+                  <span className="text-sm font-bold text-red-600">{vals[m.key]}/5</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-base">{m.low}</span>
-                  <input type="range" min={1} max={5} value={vals[m.key]} onChange={e=>setVals(v=>({...v,[m.key]:Number(e.target.value)}))} className="flex-1 accent-green-600"/>
+                  <input type="range" min={1} max={5} value={vals[m.key]} onChange={e=>setVals(v=>({...v,[m.key]:Number(e.target.value)}))} className="flex-1 accent-red-600"/>
                   <span className="text-base">{m.high}</span>
                 </div>
               </div>
             ))}
             <textarea rows={2} placeholder="Notiz (optional)" value={notes} onChange={e=>setNotes(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-500"/>
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500"/>
           </div>
-          <Btn type="submit" size="lg" className={`w-full ${saved?'bg-green-800':''}`}>{saved?'✓ Gespeichert!':'Check-In senden'}</Btn>
+          <Btn type="submit" size="lg" className={`w-full ${saved?'bg-red-800':''}`}>{saved?'✓ Gespeichert!':'Check-In senden'}</Btn>
         </form>
       )}
       {history.length>0&&(
@@ -1159,7 +1221,7 @@ function PlayerStats({profile}) {
       {ratings.length===0 ? <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📊</div><p className="text-sm">Noch keine Beurteilungen vom Trainer.</p></div> : (
         <div className="space-y-4">
           <div className="bg-white border border-gray-200 rounded-2xl p-5 text-center">
-            <div className="text-5xl font-bold text-green-600">{avg}</div>
+            <div className="text-5xl font-bold text-red-600">{avg}</div>
             <div className="text-sm text-gray-500 mt-1">Gesamtschnitt / 5</div>
             <div className="text-xs text-gray-400">{ratings.length} Beurteilung{ratings.length!==1?'en':''}</div>
           </div>
@@ -1168,7 +1230,7 @@ function PlayerStats({profile}) {
             {catAvgs.map(({cat,val})=>(
               <div key={cat} className="flex items-center gap-3 mb-2.5">
                 <div className="w-20 text-sm text-gray-600">{cat}</div>
-                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-green-500 rounded-full transition-all" style={{width:`${(val/5)*100}%`}}/></div>
+                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-red-500 rounded-full transition-all" style={{width:`${(val/5)*100}%`}}/></div>
                 <div className="text-sm font-bold text-gray-800 w-6 text-right">{val}</div>
               </div>
             ))}
@@ -1178,7 +1240,7 @@ function PlayerStats({profile}) {
             {ratings.map(r=>(
               <div key={r.id} className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex justify-between items-center mb-1.5">
                 <div><div className="text-sm text-gray-700">{r.date}</div>{r.notes&&<div className="text-xs text-gray-400 italic">{r.notes}</div>}</div>
-                <div className="text-lg font-bold text-green-600">{r.avg}</div>
+                <div className="text-lg font-bold text-red-600">{r.avg}</div>
               </div>
             ))}
           </div>
@@ -1194,7 +1256,7 @@ function PlayerStats({profile}) {
 function PlayerNews() {
   const [posts, setPosts] = useState([]);
   useEffect(()=>{ return col('news').orderBy('createdAt','desc').limit(30).onSnapshot(s=>setPosts(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
-  const CAT_COLORS = {'Allgemein':'bg-gray-100 text-gray-600','Ankündigung':'bg-blue-100 text-blue-700','Wichtig':'bg-red-100 text-red-600','Veranstaltung':'bg-green-100 text-green-700'};
+  const CAT_COLORS = {'Allgemein':'bg-gray-100 text-gray-600','Ankündigung':'bg-blue-100 text-blue-700','Wichtig':'bg-red-100 text-red-600','Veranstaltung':'bg-red-100 text-red-700'};
 
   return (
     <div className="p-4">
@@ -1237,7 +1299,7 @@ function PlayerApp({profile}) {
     training: <PlayerTraining profile={profile}/>,
     wellness: <PlayerWellness profile={profile}/>,
     stats:    <PlayerStats profile={profile}/>,
-    chat:     <ChatPage profile={profile} accent="blue"/>,
+    chat:     <ChatPage profile={profile} accent="red"/>,
     news:     <PlayerNews/>,
   };
 
@@ -1308,7 +1370,8 @@ function AdminTrainer({show}) {
   const [loading, setLoading] = useState(false);
 
   useEffect(()=>{
-    const u1=col('users').where('role','==','trainer').onSnapshot(s=>setTrainers(s.docs.map(d=>({id:d.id,...d.data()}))));
+    // Zeige sowohl Trainer als auch Vorstand-Mitglieder
+    const u1=col('users').where('role','in',['trainer','vorstand']).onSnapshot(s=>setTrainers(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=col('teams').orderBy('name').onSnapshot(s=>setTeams(s.docs.map(d=>({id:d.id,...d.data()}))));
     return ()=>{u1();u2();};
   },[]);
@@ -1350,10 +1413,14 @@ function AdminTrainer({show}) {
           {trainers.map(t=>(
             <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-3">
               <Avatar name={t.name} color={t.color} size="sm"/>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">{t.name}</div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <div className="text-sm font-semibold truncate">{t.name}</div>
+                  {t.role==='vorstand'&&<span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">Vorstand</span>}
+                </div>
                 <div className="text-xs text-gray-400 truncate">{t.email}</div>
                 {t.teamId&&<div className="text-xs text-purple-600">{teamMap[t.teamId]||'–'}</div>}
+                {!t.teamId&&t.role!=='vorstand'&&<div className="text-xs text-amber-500">Kein Team zugewiesen</div>}
               </div>
             </div>
           ))}
@@ -1371,7 +1438,7 @@ function AdminPinnwand({profile, show}) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({title:'',content:'',category:'Allgemein'});
   const CATS = ['Allgemein','Ankündigung','Wichtig','Veranstaltung'];
-  const CAT_COLORS = {'Allgemein':'bg-gray-100 text-gray-600','Ankündigung':'bg-blue-100 text-blue-700','Wichtig':'bg-red-100 text-red-600','Veranstaltung':'bg-green-100 text-green-700'};
+  const CAT_COLORS = {'Allgemein':'bg-gray-100 text-gray-600','Ankündigung':'bg-blue-100 text-blue-700','Wichtig':'bg-red-100 text-red-600','Veranstaltung':'bg-red-100 text-red-700'};
 
   useEffect(()=>{ return col('news').orderBy('createdAt','desc').onSnapshot(s=>setPosts(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
 
@@ -1503,26 +1570,32 @@ function App() {
   },[]);
 
   if (profile === undefined) return (
-    <div className="min-h-screen bg-gradient-to-br from-green-700 to-green-900 flex items-center justify-center">
+    <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center">
       <div className="text-center text-white">
         <div className="text-5xl mb-4">⚽</div>
         <div className="w-8 h-8 border-4 border-white/30 border-t-white rounded-full animate-spin mx-auto"/>
-        <p className="text-green-200 text-sm mt-3">KickCoach lädt…</p>
+        <p className="text-red-200 text-sm mt-3">KickCoach lädt…</p>
       </div>
     </div>
   );
 
   if (!profile) return <LoginPage/>;
 
-  if (profile.role === 'admin')   return <AdminApp   profile={profile}/>;
-  if (profile.role === 'trainer') return <TrainerApp profile={profile}/>;
-  if (profile.role === 'player')  return <PlayerApp  profile={profile}/>;
+  // Trainer & Spieler müssen nach Registrierung ein Team wählen
+  const needsTeam = (profile.role === 'trainer' || profile.role === 'player') && !profile.teamId;
+  if (needsTeam) return (
+    <TeamPicker profile={profile} onTeamSelected={(teamId)=>setProfile(p=>({...p,teamId}))}/>
+  );
+
+  if (profile.role === 'vorstand') return <AdminApp   profile={profile}/>;
+  if (profile.role === 'trainer')  return <TrainerApp profile={profile}/>;
+  if (profile.role === 'player')   return <PlayerApp  profile={profile}/>;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-8 text-center">
       <div>
         <div className="text-4xl mb-4">⚠️</div>
-        <p className="text-gray-600 mb-4">Unbekannte Benutzerrolle.<br/>Bitte Admin kontaktieren.</p>
+        <p className="text-gray-600 mb-4">Unbekannte Benutzerrolle.<br/>Bitte Vorstand kontaktieren.</p>
         <button onClick={()=>auth.signOut()} className="text-sm text-gray-500 underline">Abmelden</button>
       </div>
     </div>
