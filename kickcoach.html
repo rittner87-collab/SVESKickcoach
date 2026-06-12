@@ -4182,11 +4182,13 @@ function WochenGrid({data, onEdit, onDelete, emptyText='Noch keine Einträge.'})
   // data: [{id, tag, label, sublabel, color}]
   if(data.length===0) return <div className="text-center text-gray-400 py-8 text-sm">{emptyText}</div>;
 
+  const sortByTime = (arr) => [...arr].sort((a,b)=>(a.uhrzeitVon||a.uhrzeit||'').localeCompare(b.uhrzeitVon||b.uhrzeit||''));
+
   // Mobile: Tagesliste mit voller Textanzeige
   const MobileList = () => (
     <div className="space-y-2 sm:hidden">
       {WOCHENTAGE.map(tag=>{
-        const entries = data.filter(d=>d.tag===tag);
+        const entries = sortByTime(data.filter(d=>d.tag===tag));
         if(!entries.length) return null;
         return (
           <div key={tag} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -4218,7 +4220,7 @@ function WochenGrid({data, onEdit, onDelete, emptyText='Noch keine Einträge.'})
     <div className="hidden sm:block overflow-x-auto -mx-4 px-4 pb-2">
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px',minWidth:'560px'}}>
         {WOCHENTAGE.map(tag=>{
-          const entries = data.filter(d=>d.tag===tag);
+          const entries = sortByTime(data.filter(d=>d.tag===tag));
           return (
             <div key={tag} className="rounded-xl border border-gray-200 overflow-hidden">
               <div className={`py-1.5 text-center text-[10px] font-bold uppercase tracking-wider ${tag==='Sa'||tag==='So'?'bg-amber-50 text-amber-600':'bg-gray-50 text-gray-500'}`}>{tag}</div>
