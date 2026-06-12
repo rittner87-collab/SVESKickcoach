@@ -12,6 +12,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 </head>
 <body class="bg-gray-50 text-gray-900">
@@ -24,18 +25,28 @@
 //  ➜ Firebase Console → Projekteinstellungen → Deine Apps → Web
 // ═══════════════════════════════════════════════════════════════════
 const firebaseConfig = {
-  apiKey:            "DEIN_API_KEY",
-  authDomain:        "DEIN_PROJEKT.firebaseapp.com",
-  projectId:         "DEIN_PROJEKT_ID",
-  storageBucket:     "DEIN_PROJEKT.appspot.com",
-  messagingSenderId: "DEINE_SENDER_ID",
-  appId:             "DEINE_APP_ID"
+  apiKey:            "AIzaSyDp41_2c1fLlMcrxUxmCkzX6nSRakGqrZA",
+  authDomain:        "vereinsapp-12b24.firebaseapp.com",
+  projectId:         "vereinsapp-12b24",
+  storageBucket:     "vereinsapp-12b24.firebasestorage.app",
+  messagingSenderId: "117275617889",
+  appId:             "1:117275617889:web:f9d2ccb4a221d838065820"
 };
 
 firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db   = firebase.firestore();
-const ts   = () => firebase.firestore.FieldValue.serverTimestamp();
+const auth    = firebase.auth();
+const db      = firebase.firestore();
+const storage = firebase.storage();
+const ts      = () => firebase.firestore.FieldValue.serverTimestamp();
+
+// Zweite Firebase-Instanz — nur für User-Erstellung ohne den Admin auszuloggen
+const secondaryApp  = firebase.initializeApp(firebaseConfig, 'secondary');
+const secondaryAuth = secondaryApp.auth();
+const createUser = async (email, pw) => {
+  const {user} = await secondaryAuth.createUserWithEmailAndPassword(email, pw);
+  await secondaryAuth.signOut();
+  return user;
+};
 const { useState, useEffect, useCallback, useRef } = React;
 
 // ─── Utilities ──────────────────────────────────────────────────────
@@ -159,9 +170,11 @@ function LoginPage() {
   const [msg,    setMsg]    = useState('');
 
   const ROLES = [
-    {v:'player',  l:'Spieler',  icon:'⚽', desc:'Trainings, Wellness, Chat'},
-    {v:'trainer', l:'Trainer',  icon:'📋', desc:'Kader, Training, Taktik'},
-    {v:'vorstand',l:'Vorstand', icon:'🏟️',desc:'Vollzugriff, Teams & Verwaltung'},
+    {v:'player',           l:'Spieler',             icon:'⚽', desc:'Training, Wellness, Chat'},
+    {v:'trainer',          l:'Trainer',             icon:'📋', desc:'Kader, Training, Taktik'},
+    {v:'dual',             l:'Trainer & Spieler',   icon:'🔄', desc:'Zwei Teams, zwei Rollen'},
+    {v:'vorstand',         l:'Vorstand',            icon:'🏟️',desc:'Genehmigung erforderlich 🔒'},
+    {v:'vorstand_trainer', l:'Vorstand & Trainer',  icon:'🎯', desc:'Genehmigung erforderlich 🔒', wide:true},
   ];
 
   const login = async (e) => {
@@ -177,62 +190,104 @@ function LoginPage() {
       const {user} = await auth.createUserWithEmailAndPassword(email, pw);
       const existing = await col('users').limit(2).get();
       const isFirst  = existing.docs.filter(d=>d.id!==user.uid).length === 0;
-      // First user always becomes Vorstand
-      const finalRole = isFirst ? 'vorstand' : role;
+      // Fester Vorstand-Account + erster Nutzer = immer Vorstand
+      const ADMIN_EMAIL = 'finanzmakler.rittner@gmail.com';
+      const isAdmin = isFirst || email.trim().toLowerCase() === ADMIN_EMAIL;
+      const finalRole = isAdmin ? 'vorstand' : role;
+      const needsApproval = !isAdmin && (finalRole === 'vorstand' || finalRole === 'vorstand_trainer');
       await col('users').doc(user.uid).set({
-        name, email,
+        name, email: email.trim().toLowerCase(),
         role: finalRole,
-        teamId: '',   // Team wird nach Anmeldung gewählt
+        status: needsApproval ? 'pending' : 'active',
+        teamId: '',           // Spieler-Team (nach Anmeldung gewählt)
+        trainerTeamId: '',    // Trainer-Team (nur bei dual)
         color: randColor(), createdAt: ts()
       });
     } catch(err) { setMsg(err.message); }
     setLoading(false);
   };
 
+  const inputCls = "w-full rounded-xl px-4 py-3 text-sm bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-colors";
+  const labelCls = "block text-xs font-medium text-gray-400 mb-1.5";
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-6">
-          <div className="text-5xl mb-2">⚽</div>
-          <h1 className="text-3xl font-bold text-white">KickCoach</h1>
-          <p className="text-red-200 text-sm mt-1">Dein Vereins-Manager</p>
-        </div>
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
-          <div className="flex border-b">
-            {[['login','🔐 Anmelden'],['register','✍️ Registrieren']].map(([v,l])=>(
-              <button key={v} onClick={()=>{setTab(v);setMsg('');}}
-                className={`flex-1 py-3.5 text-sm font-semibold transition-colors ${tab===v?'text-red-700 border-b-2 border-red-700 bg-red-50':'text-gray-500 hover:text-gray-700'}`}>
-                {l}
-              </button>
-            ))}
+    <div className="min-h-screen flex flex-col items-center justify-center p-4"
+      style={{background:'linear-gradient(160deg,#1a0505 0%,#0d0d0d 45%,#0a0a0a 100%)'}}>
+
+      {/* Hero */}
+      <div className="text-center mb-8">
+        <div className="flex justify-center mb-4">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-full blur-2xl opacity-40" style={{background:'radial-gradient(circle,#CC0000,transparent)'}}/>
+            <div className="text-7xl relative">⚽</div>
           </div>
-          <form onSubmit={tab==='login'?login:register} className="p-5">
-            {tab==='register' && <>
-              <Inp label="Vollständiger Name" value={name} onChange={e=>setName(e.target.value)} placeholder="Max Mustermann" required/>
-              <div className="mb-3">
-                <label className="block text-xs font-medium text-gray-600 mb-2">Ich bin…</label>
-                <div className="grid grid-cols-3 gap-2">
+        </div>
+        <h1 className="text-2xl font-black text-white tracking-wide">SV Eintracht Dobritz</h1>
+        <p className="text-gray-400 text-xs mt-1.5 tracking-widest uppercase font-medium">seit 1950 · KickCoach</p>
+        <div className="mt-3 text-sm font-light" style={{color:'#cc4444', fontStyle:'italic', letterSpacing:'0.3px'}}>
+          Dein Verein. Deine Liebe. Deine Leidenschaft.
+        </div>
+      </div>
+
+      {/* Card */}
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl" style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)'}}>
+        {/* Tabs */}
+        <div className="flex" style={{borderBottom:'1px solid rgba(255,255,255,0.08)'}}>
+          {[['login','Anmelden'],['register','Registrieren']].map(([v,l])=>(
+            <button key={v} onClick={()=>{setTab(v);setMsg('');}}
+              className="flex-1 py-3.5 text-sm font-semibold transition-all"
+              style={tab===v
+                ? {color:'#fff',borderBottom:'2px solid #CC0000',background:'rgba(204,0,0,0.08)'}
+                : {color:'rgba(255,255,255,0.35)',borderBottom:'2px solid transparent'}}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={tab==='login'?login:register} className="p-5 space-y-3">
+          {tab==='register' && (
+            <>
+              <div>
+                <label className={labelCls}>Vollständiger Name</label>
+                <input className={inputCls} value={name} onChange={e=>setName(e.target.value)} placeholder="Max Mustermann" required/>
+              </div>
+              <div>
+                <label className={labelCls}>Ich bin…</label>
+                <div className="grid grid-cols-2 gap-2">
                   {ROLES.map(r=>(
                     <button key={r.v} type="button" onClick={()=>setRole(r.v)}
-                      className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border-2 text-center transition-all ${role===r.v?'border-red-500 bg-red-50':'border-gray-200 bg-white hover:border-gray-300'}`}>
-                      <span className="text-xl">{r.icon}</span>
-                      <span className="text-xs font-semibold text-gray-800">{r.l}</span>
-                      <span className="text-[9px] text-gray-400 leading-tight">{r.desc}</span>
+                      className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-center transition-all ${r.wide?'col-span-2':''}`}
+                      style={role===r.v
+                        ? {borderColor:'#CC0000',background:'rgba(204,0,0,0.12)'}
+                        : {borderColor:'rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.03)'}}>
+                      <span className="text-lg">{r.icon}</span>
+                      <span className="text-xs font-semibold text-white">{r.l}</span>
+                      <span className="text-[9px] leading-tight" style={{color:'rgba(255,255,255,0.4)'}}>{r.desc}</span>
                     </button>
                   ))}
                 </div>
               </div>
-            </>}
-            <Inp label="E-Mail" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@beispiel.de" required/>
-            <Inp label="Passwort" type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••" required minLength={6}/>
-            {tab==='register'&&<p className="text-[11px] text-gray-400 mb-2">Du wählst dein Team nach der Registrierung.</p>}
-            {msg && <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">{msg}</p>}
-            <Btn type="submit" size="lg" className="w-full mt-1" disabled={loading}>
-              {loading ? '⏳ Bitte warten…' : tab==='login' ? 'Anmelden' : 'Konto erstellen'}
-            </Btn>
-          </form>
-        </div>
+            </>
+          )}
+          <div>
+            <label className={labelCls}>E-Mail</label>
+            <input className={inputCls} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@beispiel.de" required/>
+          </div>
+          <div>
+            <label className={labelCls}>Passwort</label>
+            <input className={inputCls} type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••" required minLength={6}/>
+          </div>
+          {tab==='register' && <p className="text-[11px]" style={{color:'rgba(255,255,255,0.3)'}}>Du wählst dein Team nach der Registrierung.</p>}
+          {msg && <p className="text-xs rounded-xl px-4 py-2.5" style={{background:'rgba(204,0,0,0.15)',border:'1px solid rgba(204,0,0,0.3)',color:'#ff8080'}}>{msg}</p>}
+          <button type="submit" disabled={loading}
+            className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40"
+            style={{background:'linear-gradient(135deg,#CC0000,#990000)',boxShadow:'0 4px 20px rgba(204,0,0,0.3)'}}>
+            {loading ? '⏳ Bitte warten…' : tab==='login' ? 'Anmelden' : 'Konto erstellen'}
+          </button>
+        </form>
       </div>
+
+      <p className="mt-6 text-[11px]" style={{color:'rgba(255,255,255,0.2)'}}>© SV Eintracht Dobritz 1950 e.V.</p>
     </div>
   );
 }
@@ -241,19 +296,46 @@ function LoginPage() {
 //  TEAM AUSWAHL (nach Registrierung / wenn kein Team zugewiesen)
 // ═══════════════════════════════════════════════════════════════════
 function TeamPicker({profile, onTeamSelected}) {
-  const [teams,   setTeams]   = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving,  setSaving]  = useState(false);
+  const [teams,          setTeams]          = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [saving,         setSaving]         = useState(false);
+  // Für Dual-Rolle: Schritt 1 = Spieler-Team, Schritt 2 = Trainer-Team
+  const [step,           setStep]           = useState(1);
+  const [playerTeamId,   setPlayerTeamId]   = useState('');
+
+  const isDual   = profile.role === 'dual';
+  const isVT     = profile.role === 'vorstand_trainer';
 
   useEffect(()=>{ getDocs_(col('teams').orderBy('name')).then(t=>{ setTeams(t); setLoading(false); }); },[]);
 
   const pick = async (teamId) => {
+    if (isDual && step === 1) {
+      setPlayerTeamId(teamId);
+      setStep(2);
+      return;
+    }
     setSaving(true);
-    await col('users').doc(profile.id).update({teamId});
-    onTeamSelected(teamId);
+    if (isDual) {
+      const trainerTeamId = teamId;
+      await col('users').doc(profile.id).update({ teamId: playerTeamId, trainerTeamId });
+      onTeamSelected({ teamId: playerTeamId, trainerTeamId });
+    } else if (isVT) {
+      // Vorstand & Trainer: nur trainerTeamId nötig
+      await col('users').doc(profile.id).update({ trainerTeamId: teamId });
+      onTeamSelected({ trainerTeamId: teamId });
+    } else {
+      await col('users').doc(profile.id).update({ teamId });
+      onTeamSelected({ teamId });
+    }
+    setSaving(false);
   };
 
-  const ROLE_LABEL = {player:'Spieler', trainer:'Trainer', vorstand:'Vorstand'};
+  const ROLE_LABEL = {player:'Spieler', trainer:'Trainer', vorstand:'Vorstand', dual:'Trainer & Spieler', vorstand_trainer:'Vorstand & Trainer'};
+  const stepLabel  = isDual
+    ? (step===1 ? '⚽ Als welches Team spielst du selbst?' : '📋 Welches Team trainierst du?')
+    : isVT ? '🎯 Welches Team trainierst du?'
+    : 'Welchem Team gehörst du an?';
+  const stepHint   = isDual && step===2 ? `Spieler bei: ${teams.find(t=>t.id===playerTeamId)?.name||''}` : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center p-4">
@@ -262,6 +344,13 @@ function TeamPicker({profile, onTeamSelected}) {
           <div className="text-5xl mb-2">⚽</div>
           <h1 className="text-2xl font-bold text-white">Team wählen</h1>
           <p className="text-red-200 text-sm mt-1">Hallo {profile.name} · {ROLE_LABEL[profile.role]||profile.role}</p>
+          {isDual && (
+            <div className="flex justify-center gap-1.5 mt-3">
+              {[1,2].map(s=>(
+                <div key={s} className={`h-1.5 w-8 rounded-full transition-all ${step>=s?'bg-red-400':'bg-white/20'}`}/>
+              ))}
+            </div>
+          )}
         </div>
         <div className="bg-white rounded-2xl shadow-2xl p-5">
           {loading ? <Spinner/> : teams.length === 0 ? (
@@ -273,20 +362,24 @@ function TeamPicker({profile, onTeamSelected}) {
             </div>
           ) : (
             <>
-              <p className="text-sm text-gray-600 mb-4">Welchem Team gehörst du an?</p>
-              <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-700 mb-1">{stepLabel}</p>
+              {stepHint && <p className="text-xs text-red-500 mb-3">✓ {stepHint}</p>}
+              <div className="space-y-2 mt-3">
                 {teams.map(t=>(
-                  <button key={t.id} onClick={()=>pick(t.id)} disabled={saving}
-                    className="w-full flex items-center gap-3 border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3.5 text-left transition-all disabled:opacity-40">
+                  <button key={t.id} onClick={()=>pick(t.id)} disabled={saving || (isDual && step===2 && t.id===playerTeamId)}
+                    className="w-full flex items-center gap-3 border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3.5 text-left transition-all disabled:opacity-30">
                     <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-lg flex-shrink-0">🏟️</div>
                     <div>
                       <div className="text-sm font-semibold">{t.name}</div>
                       {t.category&&<div className="text-xs text-gray-400">{t.category}</div>}
+                      {isDual && step===2 && t.id===playerTeamId && <div className="text-xs text-gray-300">Bereits als Spieler gewählt</div>}
                     </div>
-                    <div className="ml-auto text-red-500 opacity-0 group-hover:opacity-100">→</div>
                   </button>
                 ))}
               </div>
+              {isDual && step===2 && (
+                <button onClick={()=>setStep(1)} className="mt-3 text-xs text-gray-400 hover:text-gray-600">← Zurück</button>
+              )}
               <button onClick={()=>auth.signOut()} className="mt-4 w-full text-xs text-gray-400 hover:text-gray-600 text-center">Abmelden</button>
             </>
           )}
@@ -299,7 +392,7 @@ function TeamPicker({profile, onTeamSelected}) {
 // ═══════════════════════════════════════════════════════════════════
 //  SHARED LAYOUT (Sidebar + Mobile Toggle)
 // ═══════════════════════════════════════════════════════════════════
-function Layout({profile, nav, page, setPage, onLogout, accent='red', children}) {
+function Layout({profile, nav, page, setPage, onLogout, accent='red', extraHeader, children}) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const SidebarContent = () => (
@@ -311,9 +404,11 @@ function Layout({profile, nav, page, setPage, onLogout, accent='red', children})
         </div>
         <div className="min-w-0">
           <div className="text-xs font-semibold text-white truncate">{profile.name}</div>
-          <div className="text-[10px] text-white/40">{{vorstand:'Vorstand',trainer:'Trainer',player:'Spieler'}[profile.role]||profile.role}</div>
+          <div className="text-[10px] text-white/40">{{vorstand:'Vorstand',trainer:'Trainer',player:'Spieler',dual:'Trainer & Spieler'}[profile.role]||profile.role}</div>
         </div>
       </div>
+      {/* Modus-Umschalter (nur bei dual) */}
+      {extraHeader && <div className="pt-2">{extraHeader}</div>}
       {/* Nav */}
       <nav className="flex-1 p-2 overflow-y-auto">
         {nav.map(({section, items}) => (
@@ -363,29 +458,130 @@ function Layout({profile, nav, page, setPage, onLogout, accent='red', children})
 // ═══════════════════════════════════════════════════════════════════
 //  TRAINER — KADER
 // ═══════════════════════════════════════════════════════════════════
+const fmtAge = (dob) => {
+  if(!dob) return null;
+  const today = new Date(), birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if(m<0||(m===0&&today.getDate()<birth.getDate())) age--;
+  return age;
+};
+const fmtDob = (dob) => {
+  if(!dob) return '';
+  const d = new Date(dob+'T12:00:00');
+  return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
+};
+
+function TrainerPlayerDetail({player, onClose, show}) {
+  const [empTeam,  setEmpTeam]  = useState(player.empfehlung?.team||'');
+  const [empNotiz, setEmpNotiz] = useState(player.empfehlung?.notiz||'');
+  const [notizen,  setNotizen]  = useState(player.trainerNotizen||'');
+  const [saving,   setSaving]   = useState(false);
+  const TEAMS = ['U7','U8','U9','U10','U11','U12','U13','U14','U15','U16','U17','U18','1. Mannschaft','2. Mannschaft','3. Mannschaft','Kader halten'];
+
+  const save = async () => {
+    setSaving(true);
+    await col('users').doc(player.id).update({
+      trainerNotizen: notizen,
+      empfehlung: {team: empTeam, notiz: empNotiz, updatedAt: new Date().toISOString(), trainerName: player._trainerName||''}
+    });
+    show('Gespeichert ✅'); setSaving(false); onClose();
+  };
+
+  return (
+    <Modal title={`${player.name}`} onClose={onClose} wide={true}>
+      <div className="space-y-4">
+        {/* Steckbrief */}
+        <div className="flex items-center gap-3 bg-gray-50 rounded-xl p-3">
+          <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0" style={{background:player.color||'#CC0000'}}>
+            {player.number||initials(player.name)}
+          </div>
+          <div>
+            <div className="font-semibold">{player.name}</div>
+            <div className="text-xs text-gray-500">
+              {player.position} · #{player.number||'—'}
+              {player.dob && ` · ${fmtDob(player.dob)} (${fmtAge(player.dob)} J.)`}
+            </div>
+          </div>
+        </div>
+
+        {/* Trainer-Notizen */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Trainer-Notizen</label>
+          <textarea value={notizen} onChange={e=>setNotizen(e.target.value)} rows={3}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+            placeholder="Beobachtungen, Entwicklung, Stärken/Schwächen…"/>
+        </div>
+
+        {/* Empfehlung nächste Saison */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <div className="text-xs font-semibold text-blue-700 mb-3">📋 Empfehlung für nächste Saison</div>
+          <Sel label="Empfohlenes Team" value={empTeam} onChange={e=>setEmpTeam(e.target.value)}>
+            <option value="">— kein Team gewählt —</option>
+            {TEAMS.map(t=><option key={t}>{t}</option>)}
+          </Sel>
+          <div className="mt-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Begründung / Hinweis</label>
+            <textarea value={empNotiz} onChange={e=>setEmpNotiz(e.target.value)} rows={2}
+              className="w-full border border-blue-200 bg-white rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+              placeholder="z.B. Sehr gute Entwicklung, bereit für höhere Klasse…"/>
+          </div>
+        </div>
+
+        <button onClick={save} disabled={saving}
+          className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-40 transition-colors">
+          {saving?'⏳ Speichern…':'Speichern'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function TrainerKader({profile, show}) {
-  const [players, setPlayers] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({name:'',email:'',pw:'',position:'Mittelfeld',number:''});
-  const [loading, setLoading] = useState(false);
+  const EMPTY = {name:'',position:'Mittelfeld',number:'',dob:''};
+  const [players,  setPlayers]  = useState([]);
+  const [open,     setOpen]     = useState(false);
+  const [editing,  setEditing]  = useState(null);
+  const [form,     setForm]     = useState(EMPTY);
+  const [loading,  setLoading]  = useState(false);
+  const [delId,    setDelId]    = useState(null);
+  const [detail,   setDetail]   = useState(null); // player for recommendation modal
   const POSITIONS = ['Torwart','Abwehr','Mittelfeld','Sturm'];
 
   useEffect(()=>{
     return col('users').where('teamId','==',profile.teamId).where('role','==','player')
-      .orderBy('name').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()}))));
+      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
   },[]);
 
-  const add = async (e) => {
+  const openNew  = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
+  const openEdit = (p) => { setEditing(p.id); setForm({name:p.name||'',position:p.position||'Mittelfeld',number:p.number||'',dob:p.dob||''}); setOpen(true); };
+
+  const save = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-      const {user} = await auth.createUserWithEmailAndPassword(form.email, form.pw);
-      await col('users').doc(user.uid).set({
-        name:form.name, email:form.email, role:'player', teamId:profile.teamId,
-        position:form.position, number:form.number, color:randColor(), createdAt:ts()
-      });
-      show('Spieler angelegt ✅'); setForm({name:'',email:'',pw:'',position:'Mittelfeld',number:''}); setOpen(false);
+      if (editing) {
+        await col('users').doc(editing).update({
+          name: form.name.trim(), position: form.position,
+          number: form.number, dob: form.dob,
+        });
+        show('Spieler aktualisiert ✅');
+      } else {
+        await col('users').add({
+          name: form.name.trim(), role: 'player',
+          teamId: profile.teamId, position: form.position,
+          number: form.number, dob: form.dob,
+          color: randColor(), claimed: false, uid: '', email: '', createdAt: ts()
+        });
+        show('Spieler angelegt ✅ — Spieler muss sich noch registrieren und verknüpfen.');
+      }
+      setForm(EMPTY); setOpen(false); setEditing(null);
     } catch(err) { show(err.message,'error'); }
     setLoading(false);
+  };
+
+  const doDelete = async () => {
+    await col('users').doc(delId).delete();
+    show('Spieler entfernt'); setDelId(null);
   };
 
   const grouped = POSITIONS.reduce((a,p)=>{ a[p]=players.filter(x=>x.position===p); return a; },{});
@@ -393,29 +589,61 @@ function TrainerKader({profile, show}) {
   return (
     <div className="p-4">
       <div className="flex items-center justify-between mb-4">
-        <div><h1 className="text-lg font-semibold">Kader</h1><p className="text-xs text-gray-400">{players.length} Spieler</p></div>
-        <Btn size="sm" onClick={()=>setOpen(true)}>+ Spieler</Btn>
+        <div>
+          <h1 className="text-lg font-semibold">Kader</h1>
+          <p className="text-xs text-gray-400">{players.filter(p=>p.claimed).length}/{players.length} Spieler verknüpft</p>
+        </div>
+        <Btn size="sm" onClick={openNew}>+ Spieler</Btn>
       </div>
+
+      {delId && (
+        <Modal title="Spieler entfernen?" onClose={()=>setDelId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diesen Spieler aus dem Kader entfernen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelId(null)}>Abbrechen</Btn>
+            <Btn className="flex-1 bg-red-700" onClick={doDelete}>Entfernen</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {detail && (
+        <TrainerPlayerDetail
+          player={{...detail, _trainerName: profile.name}}
+          onClose={()=>setDetail(null)}
+          show={show}
+        />
+      )}
+
       {open && (
-        <Modal title="Spieler anlegen" onClose={()=>setOpen(false)}>
-          <form onSubmit={add}>
+        <Modal title={editing ? 'Spieler bearbeiten' : 'Spieler anlegen'} onClose={()=>{setOpen(false);setEditing(null);}}>
+          {!editing && (
+            <p className="text-xs text-gray-500 mb-3 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+              ℹ️ Nur Name und Position eintragen. Der Spieler registriert sich selbst und sucht dann seinen Namen.
+            </p>
+          )}
+          <form onSubmit={save}>
             <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Max Mustermann" required/>
-            <Inp label="E-Mail" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} required/>
-            <Inp label="Passwort" type="password" value={form.pw} onChange={e=>setForm({...form,pw:e.target.value})} placeholder="Mind. 6 Zeichen" required minLength={6}/>
+            <Inp label="Geburtsdatum" type="date" value={form.dob} onChange={e=>setForm({...form,dob:e.target.value})}/>
             <div className="flex gap-2">
-              <div className="flex-1"><Sel label="Position" value={form.position} onChange={e=>setForm({...form,position:e.target.value})}>{POSITIONS.map(p=><option key={p}>{p}</option>)}</Sel></div>
+              <div className="flex-1">
+                <Sel label="Position" value={form.position} onChange={e=>setForm({...form,position:e.target.value})}>
+                  {POSITIONS.map(p=><option key={p}>{p}</option>)}
+                </Sel>
+              </div>
               <div className="w-20">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Nr.</label>
-                <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
               </div>
             </div>
             <div className="flex gap-2 mt-1">
-              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn>
-              <Btn type="submit" className="flex-1" disabled={loading}>{loading?'…':'Anlegen'}</Btn>
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>{setOpen(false);setEditing(null);}}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1" disabled={loading}>{loading?'…':editing?'Speichern':'Anlegen'}</Btn>
             </div>
           </form>
         </Modal>
       )}
+
       {players.length===0 ? (
         <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">👥</div><p className="text-sm">Noch keine Spieler im Kader.</p></div>
       ) : (
@@ -425,13 +653,23 @@ function TrainerKader({profile, show}) {
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{pos} ({grouped[pos].length})</div>
               <div className="space-y-1.5">
                 {grouped[pos].map(p=>(
-                  <div key={p.id} className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-4 py-2.5">
+                  <div key={p.id} onClick={()=>setDetail(p)}
+                    className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:border-red-200 hover:bg-red-50/30 transition-colors">
                     <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
                       {p.number||initials(p.name)}
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{p.name}</div>
-                      <div className="text-xs text-gray-400 truncate">{p.email}</div>
+                      <div className="text-xs text-gray-400 truncate">
+                        {p.dob && <span>{fmtDob(p.dob)} · {fmtAge(p.dob)} J. · </span>}
+                        {p.claimed ? (p.email||'Verknüpft') : 'Noch nicht registriert'}
+                        {p.empfehlung?.team && <span className="text-blue-600 ml-1">· 📋 {p.empfehlung.team}</span>}
+                      </div>
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0 items-center">
+                      {!p.claimed && <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full">Ausstehend</span>}
+                      <button onClick={e=>{e.stopPropagation();openEdit(p);}} className="text-gray-400 hover:text-red-600 px-1.5 py-1 rounded-lg hover:bg-red-50 text-xs">✏️</button>
+                      <button onClick={e=>{e.stopPropagation();setDelId(p.id);}} className="text-gray-400 hover:text-red-600 px-1.5 py-1 rounded-lg hover:bg-red-50 text-xs">🗑</button>
                     </div>
                   </div>
                 ))}
@@ -448,24 +686,69 @@ function TrainerKader({profile, show}) {
 //  TRAINER — TRAININGSPLAN
 // ═══════════════════════════════════════════════════════════════════
 function TrainerTraining({profile, show}) {
-  const [sessions, setSessions] = useState([]);
-  const [drills,   setDrills]   = useState([]);
-  const [open,     setOpen]     = useState(false);
-  const [form, setForm] = useState({date:'',time:'18:00',duration:'90',location:'',notes:'',drillIds:[]});
+  const EMPTY = {date:'',time:'18:00',duration:'90',location:'',notes:'',drillIds:[]};
+  const [sessions,   setSessions]  = useState([]);
+  const [drills,     setDrills]    = useState([]);
+  const [players,    setPlayers]   = useState([]);
+  const [attMap,     setAttMap]    = useState({}); // sessionId → {yes,no,maybe,byPlayer:{uid→status}}
+  const [open,       setOpen]      = useState(false);
+  const [editing,    setEditing]   = useState(null);
+  const [form,       setForm]      = useState(EMPTY);
+  const [deleting,   setDeleting]  = useState(null);
+  const [detail,     setDetail]    = useState(null); // session for detail view
 
   useEffect(()=>{
-    const u1=col('sessions').where('teamId','==',profile.teamId).orderBy('date')
-      .onSnapshot(s=>setSessions(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=col('drills').where('teamId','==',profile.teamId).orderBy('name')
-      .onSnapshot(s=>setDrills(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{u1();u2();};
+    const u1=col('sessions').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setSessions(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date?.localeCompare(b.date||''))));
+    const u2=col('drills').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setDrills(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+    const u3=col('users').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='player'||p.role==='dual')));
+    const u4=col('attendance').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>{
+        const map={};
+        s.docs.forEach(d=>{
+          const {sessionId,userId,status}=d.data();
+          if(!map[sessionId]) map[sessionId]={yes:0,no:0,maybe:0,byPlayer:{}};
+          if(status==='yes')   map[sessionId].yes++;
+          if(status==='no')    map[sessionId].no++;
+          if(status==='maybe') map[sessionId].maybe++;
+          map[sessionId].byPlayer[userId]=status;
+        });
+        setAttMap(map);
+      });
+    return ()=>{u1();u2();u3();u4();};
   },[]);
 
-  const add = async (e) => {
+  const openNew  = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
+  const openEdit = (s) => { setEditing(s.id); setForm({date:s.date||'',time:s.time||'18:00',duration:s.duration||'90',location:s.location||'',notes:s.notes||'',drillIds:s.drillIds||[]}); setOpen(true); };
+
+  const save = async (e) => {
     e.preventDefault();
-    await col('sessions').add({...form, teamId:profile.teamId, createdAt:ts()});
-    show('Trainingseinheit gespeichert ✅');
-    setForm({date:'',time:'18:00',duration:'90',location:'',notes:'',drillIds:[]}); setOpen(false);
+    if (editing) {
+      await col('sessions').doc(editing).update({...form});
+      show('Trainingseinheit aktualisiert ✅');
+    } else {
+      await col('sessions').add({...form, teamId:profile.teamId, createdAt:ts()});
+      show('Trainingseinheit gespeichert ✅');
+    }
+    setForm(EMPTY); setOpen(false); setEditing(null);
+  };
+
+  const doDelete = async (id) => {
+    await col('sessions').doc(id).delete();
+    show('Einheit gelöscht'); setDeleting(null);
+  };
+
+  // Trainer setzt Status für einen Spieler
+  const setPlayerStatus = async (sessionId, playerId, playerName, status) => {
+    const existing = await col('attendance')
+      .where('sessionId','==',sessionId).where('userId','==',playerId).limit(1).get();
+    if (existing.empty) {
+      await col('attendance').add({sessionId, userId:playerId, playerName, status, teamId:profile.teamId, setByTrainer:true, updatedAt:ts()});
+    } else {
+      await existing.docs[0].ref.update({status, setByTrainer:true, updatedAt:ts()});
+    }
   };
 
   const toggleDrill = (id) => setForm(f=>({...f, drillIds: f.drillIds.includes(id)?f.drillIds.filter(x=>x!==id):[...f.drillIds,id]}));
@@ -477,11 +760,35 @@ function TrainerTraining({profile, show}) {
     <div className="p-4">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-semibold">Trainingsplan</h1>
-        <Btn size="sm" onClick={()=>setOpen(true)}>+ Einheit</Btn>
+        <Btn size="sm" onClick={openNew}>+ Einheit</Btn>
       </div>
+
+      {deleting && (
+        <Modal title="Einheit löschen?" onClose={()=>setDeleting(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diese Trainingseinheit wirklich löschen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDeleting(null)}>Abbrechen</Btn>
+            <Btn className="flex-1 bg-red-700" onClick={()=>doDelete(deleting)}>Löschen</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Detailansicht */}
+      {detail && (
+        <SessionDetail
+          session={detail}
+          drillMap={drillMap}
+          players={players}
+          att={attMap[detail.id]||{yes:0,no:0,maybe:0,byPlayer:{}}}
+          onSetStatus={setPlayerStatus}
+          onEdit={(s)=>{setDetail(null);openEdit(s);}}
+          onClose={()=>setDetail(null)}
+        />
+      )}
+
       {open && (
-        <Modal title="Trainingseinheit" onClose={()=>setOpen(false)}>
-          <form onSubmit={add}>
+        <Modal title={editing ? 'Einheit bearbeiten' : 'Trainingseinheit'} onClose={()=>{setOpen(false);setEditing(null);}}>
+          <form onSubmit={save}>
             <div className="flex gap-2">
               <Inp label="Datum" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/>
               <Inp label="Zeit" type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/>
@@ -494,7 +801,7 @@ function TrainerTraining({profile, show}) {
             {drills.length>0 && (
               <div className="mb-3">
                 <label className="block text-xs font-medium text-gray-600 mb-2">Übungen verknüpfen</label>
-                <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-100 rounded-lg p-2">
+                <div className="space-y-1 max-h-36 overflow-y-auto border border-gray-100 rounded-lg p-2">
                   {drills.map(d=>(
                     <label key={d.id} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
                       <input type="checkbox" checked={form.drillIds.includes(d.id)} onChange={()=>toggleDrill(d.id)} className="accent-red-600"/>
@@ -506,23 +813,24 @@ function TrainerTraining({profile, show}) {
               </div>
             )}
             <div className="flex gap-2">
-              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn>
-              <Btn type="submit" className="flex-1">Speichern</Btn>
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>{setOpen(false);setEditing(null);}}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1">{editing?'Aktualisieren':'Speichern'}</Btn>
             </div>
           </form>
         </Modal>
       )}
+
       {sessions.length===0 ? (
         <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📅</div><p className="text-sm">Noch keine Einheiten geplant.</p></div>
       ) : (
         <div className="space-y-2">
           {upcoming.length>0 && <>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
-            {upcoming.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap}/>)}
+            {upcoming.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
           </>}
           {past.length>0 && <>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
-            {past.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} faded/>)}
+            {past.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} faded onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
           </>}
         </div>
       )}
@@ -530,23 +838,151 @@ function TrainerTraining({profile, show}) {
   );
 }
 
-const SessionCard = ({s, drillMap, faded=false}) => (
-  <div className={`border rounded-xl p-4 ${faded?'bg-gray-50 border-gray-200 opacity-70':'bg-white border-gray-200'}`}>
-    <div className="font-semibold text-sm">{fmtDate(s.date)} · {s.time} Uhr</div>
-    <div className="text-xs text-gray-400 mt-0.5">{s.duration} Min{s.location?' · '+s.location:''}</div>
-    {s.notes && <p className="text-xs text-gray-600 mt-1.5 leading-relaxed">{s.notes}</p>}
-    {s.drillIds?.length>0 && (
-      <div className="flex gap-2 mt-2 flex-wrap">
-        {s.drillIds.map(id=>drillMap[id]&&(
-          <div key={id} className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-lg px-2 py-0.5">
-            {drillMap[id].imageData && <img src={drillMap[id].imageData} className="w-8 h-5 object-cover rounded" alt=""/>}
-            <span className="text-xs text-gray-600">{drillMap[id].name}</span>
-          </div>
-        ))}
+const SessionCard = ({s, drillMap, att, faded=false, onDetail, onEdit, onDelete}) => (
+  <div className={`border rounded-xl overflow-hidden ${faded?'bg-gray-50 border-gray-200 opacity-80':'bg-white border-gray-200'}`}>
+    {/* Anklickbarer Hauptbereich */}
+    <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={onDetail}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm">{fmtDate(s.date)} · {s.time} Uhr</div>
+          <div className="text-xs text-gray-400 mt-0.5">{s.duration} Min{s.location?' · '+s.location:''}</div>
+        </div>
+        {/* Zusagen-Badges */}
+        <div className="flex gap-1 flex-shrink-0">
+          {att && (att.yes>0||att.no>0||att.maybe>0) ? <>
+            <span className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ {att.yes}</span>
+            <span className="text-[11px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">❌ {att.no}</span>
+            <span className="text-[11px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-medium">❓ {att.maybe}</span>
+          </> : <span className="text-[10px] text-gray-300">Keine Zusagen</span>}
+        </div>
       </div>
-    )}
+      {s.notes && <p className="text-xs text-gray-600 mt-1.5 leading-relaxed line-clamp-2">{s.notes}</p>}
+      {s.drillIds?.length>0 && (
+        <div className="flex gap-1.5 mt-2 flex-wrap">
+          {s.drillIds.slice(0,3).map(id=>drillMap[id]&&(
+            <span key={id} className="text-[10px] bg-blue-50 text-blue-600 border border-blue-100 rounded px-1.5 py-0.5">{drillMap[id].name}</span>
+          ))}
+          {s.drillIds.length>3&&<span className="text-[10px] text-gray-400">+{s.drillIds.length-3} weitere</span>}
+        </div>
+      )}
+    </div>
+    {/* Aktionen */}
+    <div className="flex border-t border-gray-100">
+      <button onClick={onDetail} className="flex-1 py-2 text-xs text-gray-500 hover:bg-gray-50 hover:text-red-600 transition-colors">👁 Details</button>
+      <button onClick={()=>onEdit(s)} className="flex-1 py-2 text-xs text-gray-500 hover:bg-gray-50 hover:text-red-600 transition-colors border-l border-gray-100">✏️ Bearbeiten</button>
+      <button onClick={onDelete} className="flex-1 py-2 text-xs text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors border-l border-gray-100">🗑 Löschen</button>
+    </div>
   </div>
 );
+
+function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, onClose}) {
+  const [saving, setSaving] = useState({});
+
+  const setStatus = async (player, status) => {
+    setSaving(v=>({...v,[player.id]:true}));
+    await onSetStatus(session.id, player.id, player.name, status);
+    setSaving(v=>({...v,[player.id]:false}));
+  };
+
+  const STATUS_OPTS = [
+    {v:'yes',   icon:'✅', label:'Zu',      on:'bg-green-600 text-white', off:'bg-gray-100 text-gray-500 hover:bg-green-50'},
+    {v:'maybe', icon:'❓', label:'?',       on:'bg-amber-500 text-white', off:'bg-gray-100 text-gray-500 hover:bg-amber-50'},
+    {v:'no',    icon:'❌', label:'Absage',  on:'bg-red-600 text-white',   off:'bg-gray-100 text-gray-500 hover:bg-red-50'},
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={onClose}>
+      <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col shadow-2xl" onClick={e=>e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <div className="font-bold text-base">{fmtDate(session.date)} · {session.time} Uhr</div>
+            <div className="text-xs text-gray-400">{session.duration} Min{session.location?' · '+session.location:''}</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={()=>onEdit(session)} className="text-xs text-gray-500 hover:text-red-600 px-2 py-1.5 border border-gray-200 rounded-lg">✏️ Bearbeiten</button>
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200">✕</button>
+          </div>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+          {/* Zusagen-Übersicht */}
+          <div>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Rückmeldungen</div>
+            <div className="flex gap-3 mb-4">
+              <div className="flex-1 bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                <div className="text-2xl font-bold text-green-600">{att.yes}</div>
+                <div className="text-[10px] text-green-500 font-medium">Zusagen</div>
+              </div>
+              <div className="flex-1 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                <div className="text-2xl font-bold text-amber-500">{att.maybe}</div>
+                <div className="text-[10px] text-amber-400 font-medium">Vielleicht</div>
+              </div>
+              <div className="flex-1 bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                <div className="text-2xl font-bold text-red-600">{att.no}</div>
+                <div className="text-[10px] text-red-400 font-medium">Absagen</div>
+              </div>
+            </div>
+
+            {/* Spieler-Liste mit manuellem Override */}
+            <div className="space-y-2">
+              {players.map(p=>{
+                const cur = att.byPlayer?.[p.id] || null;
+                return (
+                  <div key={p.id} className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+                      {p.number||initials(p.name)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium truncate">{p.name}</div>
+                    </div>
+                    <div className="flex gap-1">
+                      {STATUS_OPTS.map(opt=>(
+                        <button key={opt.v} onClick={()=>setStatus(p,opt.v)} disabled={saving[p.id]}
+                          className={`text-[10px] px-2 py-1 rounded-lg font-medium transition-all ${cur===opt.v?opt.on:opt.off}`}>
+                          {opt.icon}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {players.length===0 && <p className="text-xs text-gray-400">Keine Spieler im Team.</p>}
+            </div>
+          </div>
+
+          {/* Notizen */}
+          {session.notes && (
+            <div>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Notizen</div>
+              <p className="text-sm text-gray-700 leading-relaxed bg-gray-50 rounded-xl p-3">{session.notes}</p>
+            </div>
+          )}
+
+          {/* Übungen */}
+          {session.drillIds?.length>0 && (
+            <div>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Übungen ({session.drillIds.length})</div>
+              <div className="space-y-3">
+                {session.drillIds.map(id=>drillMap[id]&&(
+                  <div key={id} className="border border-gray-200 rounded-xl overflow-hidden">
+                    {drillMap[id].imageData && (
+                      <img src={drillMap[id].imageData} className="w-full object-cover" style={{maxHeight:'180px'}} alt={drillMap[id].name}/>
+                    )}
+                    <div className="px-3 py-2">
+                      <div className="text-sm font-semibold">{drillMap[id].name}</div>
+                      {drillMap[id].fieldType && <div className="text-xs text-gray-400">{drillMap[id].fieldType}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  TRAINER — TAKTIKBOARD (HTML5 Canvas)
@@ -562,8 +998,19 @@ function Taktikboard({profile, show}) {
   const [startPos,  setStartPos] = useState({x:0,y:0});
   const [drillName, setDrillName]= useState('');
   const [btnSaved,  setBtnSaved] = useState(false);
+  const [savedDrills, setSavedDrills] = useState([]);
+  const [showDrills,  setShowDrills]  = useState(false);
+  const [delDrill,    setDelDrill]    = useState(null);
+  const [textOverlay, setTextOverlay] = useState(null); // {x,y,canvasX,canvasY}
+  const [textVal,     setTextVal]     = useState('');
+  const textInputRef = useRef(null);
 
-  const TOOLS  = [{id:'draw',icon:'✏️',label:'Freihand'},{id:'arrow',icon:'↗️',label:'Laufweg'},{id:'dashed',icon:'⤏',label:'Passweg'},{id:'player',icon:'👤',label:'Spieler'},{id:'cone',icon:'△',label:'Hütchen'},{id:'ball',icon:'○',label:'Ball'},{id:'erase',icon:'⌫',label:'Radieren'}];
+  useEffect(()=>{
+    return col('drills').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setSavedDrills(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+  },[]);
+
+  const TOOLS  = [{id:'draw',icon:'✏️',label:'Freihand'},{id:'arrow',icon:'↗️',label:'Laufweg'},{id:'dashed',icon:'⤏',label:'Passweg'},{id:'player',icon:'👤',label:'Spieler'},{id:'cone',icon:'△',label:'Hütchen'},{id:'ball',icon:'○',label:'Ball'},{id:'text',icon:'T',label:'Text'},{id:'erase',icon:'⌫',label:'Radieren'}];
   const COLORS = ['#ffffff','#f59e0b','#ef4444','#3b82f6','#f97316','#22c55e'];
   const FIELDS = [{v:'full',l:'Ganzes Feld'},{v:'half',l:'Hälfte'},{v:'third',l:'Drittel'},{v:'blank',l:'Leer'}];
 
@@ -583,28 +1030,66 @@ function Taktikboard({profile, show}) {
   const saveSnap=()=>{const c=canvasRef.current; setHistory(h=>[...h.slice(-24),c.toDataURL()]);};
   const drawField=(type)=>{
     const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height, p=20;
-    ctx.fillStyle='#1a1a1a'; ctx.fillRect(0,0,W,H);
+    const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height, p=16;
+    // Grüner Rasen
+    const grad=ctx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0,'#2e7d32'); grad.addColorStop(0.5,'#388e3c'); grad.addColorStop(1,'#2e7d32');
+    ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
     if(type==='blank') return;
-    ctx.save(); ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=1.5;
+    ctx.save();
+    const lc='rgba(255,255,255,0.9)';
+    ctx.strokeStyle=lc; ctx.lineWidth=2; ctx.lineCap='round'; ctx.lineJoin='round';
     if(type==='full'){
-      const fw=W-p*2,fh=H-p*2; ctx.strokeRect(p,p,fw,fh);
+      // Alternating stripes
+      for(let i=0;i<8;i++){
+        ctx.fillStyle=i%2===0?'rgba(0,0,0,0.04)':'rgba(255,255,255,0.04)';
+        ctx.fillRect(p+i*(W-p*2)/8,p,(W-p*2)/8,H-p*2);
+      }
+      const fw=W-p*2,fh=H-p*2;
+      ctx.strokeStyle=lc; ctx.lineWidth=2;
+      ctx.strokeRect(p,p,fw,fh);
+      // Mittellinie
       ctx.beginPath();ctx.moveTo(W/2,p);ctx.lineTo(W/2,p+fh);ctx.stroke();
-      ctx.beginPath();ctx.arc(W/2,p+fh/2,fh*0.17,0,Math.PI*2);ctx.stroke();
-      ctx.beginPath();ctx.arc(W/2,p+fh/2,3,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,0.45)';ctx.fill();
-      const bw=fw*0.19,bh=fh*0.37,pw2=fw*0.07,ph=fh*0.19;
-      ctx.strokeStyle='rgba(255,255,255,0.45)';
-      ctx.strokeRect(p,p+(fh-bh)/2,bw,bh);ctx.strokeRect(W-p-bw,p+(fh-bh)/2,bw,bh);
-      ctx.strokeRect(p,p+(fh-ph)/2,pw2,ph);ctx.strokeRect(W-p-pw2,p+(fh-ph)/2,pw2,ph);
-      ctx.beginPath();ctx.arc(p,p+fh/2,fh*0.08,-Math.PI/2,Math.PI/2);ctx.stroke();
-      ctx.beginPath();ctx.arc(W-p,p+fh/2,fh*0.08,Math.PI/2,-Math.PI/2);ctx.stroke();
+      // Mittelkreis
+      ctx.beginPath();ctx.arc(W/2,H/2,fh*0.17,0,Math.PI*2);ctx.stroke();
+      // Mittelpunkt
+      ctx.fillStyle=lc;ctx.beginPath();ctx.arc(W/2,H/2,3,0,Math.PI*2);ctx.fill();
+      // Strafräume
+      const bw=fw*0.2,bh=fh*0.38,gw=fw*0.08,gh=fh*0.19;
+      ctx.strokeRect(p,H/2-bh/2,bw,bh); ctx.strokeRect(W-p-bw,H/2-bh/2,bw,bh);
+      ctx.strokeRect(p,H/2-gh/2,gw,gh); ctx.strokeRect(W-p-gw,H/2-gh/2,gw,gh);
+      // Ecken-Bögen
+      [[p,p,0,Math.PI/2],[W-p,p,Math.PI/2,Math.PI],[W-p,H-p,Math.PI,3*Math.PI/2],[p,H-p,3*Math.PI/2,2*Math.PI]].forEach(([cx,cy,sa,ea])=>{
+        ctx.beginPath();ctx.arc(cx,cy,fh*0.04,sa,ea);ctx.stroke();
+      });
+      // Strafstoß-Punkte
+      ctx.fillStyle=lc;
+      ctx.beginPath();ctx.arc(p+bw*0.55,H/2,3,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(W-p-bw*0.55,H/2,3,0,Math.PI*2);ctx.fill();
     } else if(type==='half'){
-      const fw=W-p*2,fh=H-p*2; ctx.strokeRect(p,p,fw,fh);
-      const bw=fw*0.42,bh=fh*0.38; ctx.strokeRect(p+(fw-bw)/2,p,bw,bh);
-      ctx.beginPath();ctx.arc(W/2,p+fh*0.3,fh*0.19,0,Math.PI*2);ctx.stroke();
-      ctx.beginPath();ctx.arc(W/2,p+fh*0.3,3,0,Math.PI*2);ctx.fillStyle='rgba(255,255,255,0.45)';ctx.fill();
+      for(let i=0;i<6;i++){
+        ctx.fillStyle=i%2===0?'rgba(0,0,0,0.04)':'rgba(255,255,255,0.04)';
+        ctx.fillRect(p+i*(W-p*2)/6,p,(W-p*2)/6,H-p*2);
+      }
+      const fw=W-p*2,fh=H-p*2;
+      ctx.strokeStyle=lc;ctx.lineWidth=2;
+      ctx.strokeRect(p,p,fw,fh);
+      const bw=fw*0.5,bh=fh*0.36,gw=fw*0.2,gh=fh*0.14;
+      ctx.strokeRect(p+(fw-bw)/2,p,bw,bh);
+      ctx.strokeRect(p+(fw-gw)/2,p,gw,gh);
+      ctx.beginPath();ctx.arc(W/2,p+bh,fh*0.2,Math.PI,2*Math.PI);ctx.stroke();
+      ctx.fillStyle=lc;ctx.beginPath();ctx.arc(W/2,p+fh*0.3,3,0,Math.PI*2);ctx.fill();
+      [[p,p,0,Math.PI/2],[W-p,p,Math.PI/2,Math.PI]].forEach(([cx,cy,sa,ea])=>{
+        ctx.beginPath();ctx.arc(cx,cy,fh*0.05,sa,ea);ctx.stroke();
+      });
     } else {
-      const fw=W-p*2,fh=H-p*2; ctx.strokeRect(p,p,fw,fh);
+      for(let i=0;i<4;i++){
+        ctx.fillStyle=i%2===0?'rgba(0,0,0,0.04)':'rgba(255,255,255,0.04)';
+        ctx.fillRect(p+i*(W-p*2)/4,p,(W-p*2)/4,H-p*2);
+      }
+      const fw=W-p*2,fh=H-p*2;
+      ctx.strokeStyle=lc;ctx.lineWidth=2;
+      ctx.strokeRect(p,p,fw,fh);
       [0.33,0.66].forEach(f=>{ctx.beginPath();ctx.moveTo(p,p+fh*f);ctx.lineTo(W-p,p+fh*f);ctx.stroke();});
     }
     ctx.restore();
@@ -620,9 +1105,32 @@ function Taktikboard({profile, show}) {
     ctx.lineTo(x2-hw*Math.cos(ang+0.4),y2-hw*Math.sin(ang+0.4));
     ctx.closePath();ctx.fill();ctx.restore();
   };
+  const commitText=(cpos)=>{
+    if(!textVal.trim()||!cpos) return;
+    const canvas=canvasRef.current,ctx=canvas.getContext('2d');
+    saveSnap();
+    ctx.save();
+    ctx.fillStyle=color; ctx.font=`bold ${lineSize*4+10}px sans-serif`;
+    ctx.shadowColor='rgba(0,0,0,0.6)'; ctx.shadowBlur=4;
+    ctx.fillText(textVal,cpos.canvasX,cpos.canvasY);
+    ctx.restore();
+    setTextOverlay(null); setTextVal('');
+  };
+
   const onStart=(e)=>{
     e.preventDefault();
     const canvas=canvasRef.current,ctx=canvas.getContext('2d'),p=getPos(e);
+    if(tool==='text'){
+      // Commit vorherigen Text falls noch aktiv
+      if(textOverlay) commitText(textOverlay);
+      const rect=canvas.getBoundingClientRect();
+      const cx=e.touches?e.touches[0].clientX:e.clientX;
+      const cy=e.touches?e.touches[0].clientY:e.clientY;
+      const overlay={x:cx-rect.left,y:cy-rect.top,canvasX:p.x,canvasY:p.y};
+      setTextOverlay(overlay); setTextVal('');
+      setTimeout(()=>textInputRef.current?.focus(),50);
+      return;
+    }
     if(tool==='player'){
       saveSnap(); ctx.save();ctx.fillStyle=color;ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=1.5;
       ctx.beginPath();ctx.arc(p.x,p.y,14,0,Math.PI*2);ctx.fill();ctx.stroke();
@@ -676,8 +1184,39 @@ function Taktikboard({profile, show}) {
     show('Übung gespeichert ✅'); setDrillName(''); setBtnSaved(true); setTimeout(()=>setBtnSaved(false),2000);
   };
 
+  const loadDrill=(drill)=>{
+    const canvas=canvasRef.current; if(!canvas) return;
+    const ctx=canvas.getContext('2d');
+    const img=new Image(); img.src=drill.imageData;
+    img.onload=()=>{
+      saveSnap();
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    };
+    setField(drill.fieldType||'full');
+    setDrillName(drill.name);
+    setShowDrills(false);
+    show(`"${drill.name}" geladen`);
+  };
+
+  const deleteDrill=async(id)=>{
+    await col('drills').doc(id).delete();
+    show('Übung gelöscht'); setDelDrill(null);
+  };
+
   return (
     <div className="flex flex-col" style={{height:'calc(100vh - 56px)'}}>
+      {/* Löschen-Bestätigung */}
+      {delDrill && (
+        <Modal title="Übung löschen?" onClose={()=>setDelDrill(null)}>
+          <p className="text-sm text-gray-600 mb-4">„{savedDrills.find(d=>d.id===delDrill)?.name}" wirklich löschen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelDrill(null)}>Abbrechen</Btn>
+            <Btn className="flex-1 bg-red-700" onClick={()=>deleteDrill(delDrill)}>Löschen</Btn>
+          </div>
+        </Modal>
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-200 bg-gray-50 flex-shrink-0 flex-wrap">
         <div className="flex gap-1">
@@ -706,20 +1245,71 @@ function Taktikboard({profile, show}) {
         <button onClick={undo} title="Rückgängig" className="w-7 h-7 rounded text-sm flex items-center justify-center hover:bg-white text-gray-500">↩</button>
         <button onClick={clear} title="Alles löschen" className="w-7 h-7 rounded text-sm flex items-center justify-center hover:bg-white text-gray-500">🗑</button>
       </div>
-      {/* Name + Save */}
+
+      {/* Name + Save + Übungen-Bibliothek */}
       <div className="flex gap-2 px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0">
         <input value={drillName} onChange={e=>setDrillName(e.target.value)} placeholder="Übungsname eingeben…"
           className="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-red-500"/>
         <Btn size="sm" onClick={saveDrill} className={btnSaved?'bg-red-800':''}>
           {btnSaved?'✓ Gespeichert':'💾 Speichern'}
         </Btn>
+        <button onClick={()=>setShowDrills(v=>!v)}
+          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all flex-shrink-0
+            ${showDrills?'bg-red-600 text-white border-red-600':'border-gray-200 text-gray-600 hover:border-red-400'}`}
+          title="Gespeicherte Übungen">
+          📋 {savedDrills.length}
+        </button>
       </div>
+
+      {/* Übungen-Bibliothek Panel */}
+      {showDrills && (
+        <div className="border-b border-gray-200 bg-gray-50 flex-shrink-0 overflow-x-auto">
+          {savedDrills.length===0 ? (
+            <p className="text-xs text-gray-400 px-4 py-3">Noch keine Übungen gespeichert.</p>
+          ) : (
+            <div className="flex gap-2 px-3 py-2">
+              {savedDrills.map(d=>(
+                <div key={d.id} className="flex-shrink-0 w-28 bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                  {d.imageData
+                    ? <img src={d.imageData} className="w-full h-16 object-cover cursor-pointer" alt={d.name} onClick={()=>loadDrill(d)}/>
+                    : <div className="w-full h-16 bg-gray-100 flex items-center justify-center text-gray-300 cursor-pointer" onClick={()=>loadDrill(d)}>🖼</div>
+                  }
+                  <div className="px-1.5 py-1 flex items-center justify-between gap-1">
+                    <span className="text-[10px] font-medium text-gray-700 truncate cursor-pointer" onClick={()=>loadDrill(d)}>{d.name}</span>
+                    <button onClick={()=>setDelDrill(d.id)} className="text-gray-300 hover:text-red-500 text-xs flex-shrink-0">✕</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Canvas */}
-      <div className="flex-1 bg-[#1a1a1a] overflow-hidden">
+      <div className="flex-1 overflow-hidden relative" style={{background:'#2e7d32'}}>
         <canvas ref={canvasRef}
-          style={{width:'100%',height:'100%',cursor:'crosshair',display:'block',touchAction:'none'}}
+          style={{width:'100%',height:'100%',cursor:tool==='text'?'text':'crosshair',display:'block',touchAction:'none'}}
           onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}
           onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}/>
+        {/* Text-Eingabe Overlay */}
+        {textOverlay && (
+          <div style={{position:'absolute',left:textOverlay.x,top:textOverlay.y,transform:'translateY(-100%)',zIndex:10}}>
+            <input
+              ref={textInputRef}
+              value={textVal}
+              onChange={e=>setTextVal(e.target.value)}
+              onKeyDown={e=>{
+                if(e.key==='Enter'){commitText(textOverlay);}
+                if(e.key==='Escape'){setTextOverlay(null);setTextVal('');}
+              }}
+              onBlur={()=>commitText(textOverlay)}
+              placeholder="Text eingeben…"
+              className="px-2 py-1 text-sm font-bold rounded shadow-lg border-2 border-white bg-black/70 text-white placeholder-white/50 focus:outline-none"
+              style={{minWidth:'120px'}}
+            />
+            <div className="text-[9px] text-white/60 mt-0.5 text-center">Enter = einfügen · Esc = abbrechen</div>
+          </div>
+        )}
       </div>
       <div className="px-3 py-1 border-t bg-gray-50 text-[10px] text-gray-400 flex-shrink-0 hidden md:block">
         ✏️ Freihand · ↗️ Laufweg · ⤏ Passweg · 👤 Spieler platzieren · △ Hütchen · ○ Ball · ⌫ Radieren
@@ -729,26 +1319,266 @@ function Taktikboard({profile, show}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  AUFSTELLUNG / LINEUP BUILDER
+// ═══════════════════════════════════════════════════════════════════
+const FORMATIONS = {
+  '4-3-3':  {label:'4-3-3',  slots:[
+    {id:'GK', label:'TW',  x:50, y:88},
+    {id:'RB', label:'RV',  x:82, y:70},{id:'CB1',label:'IV', x:62,y:72},{id:'CB2',label:'IV', x:38,y:72},{id:'LB', label:'LV',  x:18,y:70},
+    {id:'CM1',label:'ZM',  x:70, y:52},{id:'CM2',label:'ZM', x:50,y:48},{id:'CM3',label:'ZM', x:30,y:52},
+    {id:'RW', label:'RA',  x:80, y:25},{id:'ST', label:'MS', x:50,y:18},{id:'LW', label:'LA', x:20,y:25},
+  ]},
+  '4-4-2':  {label:'4-4-2',  slots:[
+    {id:'GK', label:'TW',  x:50, y:88},
+    {id:'RB', label:'RV',  x:82, y:70},{id:'CB1',label:'IV', x:62,y:72},{id:'CB2',label:'IV', x:38,y:72},{id:'LB', label:'LV',  x:18,y:70},
+    {id:'RM', label:'RM',  x:80, y:50},{id:'CM1',label:'ZM', x:58,y:50},{id:'CM2',label:'ZM', x:38,y:50},{id:'LM',label:'LM',  x:20,y:50},
+    {id:'ST1',label:'ST',  x:65, y:22},{id:'ST2',label:'ST', x:35,y:22},
+  ]},
+  '4-2-3-1':{label:'4-2-3-1',slots:[
+    {id:'GK', label:'TW',  x:50, y:88},
+    {id:'RB', label:'RV',  x:82, y:70},{id:'CB1',label:'IV', x:62,y:72},{id:'CB2',label:'IV', x:38,y:72},{id:'LB',label:'LV',  x:18,y:70},
+    {id:'DM1',label:'DM',  x:62, y:58},{id:'DM2',label:'DM', x:38,y:58},
+    {id:'RM', label:'RM',  x:80, y:40},{id:'CAM',label:'ZO', x:50,y:38},{id:'LM',label:'LM',  x:20,y:40},
+    {id:'ST', label:'ST',  x:50, y:18},
+  ]},
+  '3-5-2':  {label:'3-5-2',  slots:[
+    {id:'GK', label:'TW',  x:50, y:88},
+    {id:'CB1',label:'IV',  x:72, y:72},{id:'CB2',label:'IV', x:50,y:74},{id:'CB3',label:'IV', x:28,y:72},
+    {id:'RM', label:'RM',  x:88, y:50},{id:'CM1',label:'ZM', x:68,y:50},{id:'CM2',label:'ZM', x:50,y:45},{id:'CM3',label:'ZM', x:32,y:50},{id:'LM',label:'LM',  x:12,y:50},
+    {id:'ST1',label:'ST',  x:64, y:22},{id:'ST2',label:'ST', x:36,y:22},
+  ]},
+};
+
+function LineupBuilder({game, players, profile, onClose, show}) {
+  const [formation,  setFormation]  = useState('4-3-3');
+  const [lineup,     setLineup]     = useState(game.lineup||[]);  // [{slotId, playerId, name}]
+  const [selected,   setSelected]   = useState(null); // slotId being filled
+  const [attPlayers, setAttPlayers] = useState([]);
+  const [saving,     setSaving]     = useState(false);
+
+  // Lade Zusagen für dieses Spiel (Spieler die zugesagt haben oder alle wenn keine Zusagen)
+  useEffect(()=>{
+    col('attendance').where('sessionId','==',game.id).where('status','==','yes')
+      .get().then(snap=>{
+        if(snap.empty) {
+          // Keine Zusagen → alle Spieler anzeigen
+          setAttPlayers(players);
+        } else {
+          const yesIds = new Set(snap.docs.map(d=>d.data().userId));
+          setAttPlayers(players.filter(p=>yesIds.has(p.id)));
+        }
+      });
+  },[game.id, players]);
+
+  const slots    = FORMATIONS[formation].slots;
+  const assigned = Object.fromEntries(lineup.map(l=>[l.slotId,l]));
+  const usedIds  = new Set(lineup.map(l=>l.playerId));
+
+  const clickSlot = (slot) => {
+    if (selected === slot.id) { setSelected(null); return; }
+    setSelected(slot.id);
+  };
+
+  const assignPlayer = (player) => {
+    if (!selected) return;
+    setLineup(prev=>{
+      const without = prev.filter(l=>l.slotId!==selected && l.playerId!==player.id);
+      return [...without, {slotId:selected, playerId:player.id, name:player.name, number:player.number, color:player.color}];
+    });
+    setSelected(null);
+  };
+
+  const removeSlot = (slotId, e) => {
+    e.stopPropagation();
+    setLineup(prev=>prev.filter(l=>l.slotId!==slotId));
+  };
+
+  const saveLineup = async () => {
+    setSaving(true);
+    await col('games').doc(game.id).update({lineup, formation});
+    show('Aufstellung gespeichert ✅');
+    setSaving(false);
+    onClose();
+  };
+
+  const freePlayers = attPlayers.filter(p=>!usedIds.has(p.id));
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-2" onClick={onClose}>
+      <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{maxHeight:'95vh'}} onClick={e=>e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 flex-shrink-0">
+          <div>
+            <div className="font-bold text-sm">Aufstellung — vs. {game.opponent}</div>
+            <div className="text-xs text-gray-400">{fmtDate(game.date)}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <select value={formation} onChange={e=>{setFormation(e.target.value);setLineup([]);setSelected(null);}}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-red-500">
+              {Object.entries(FORMATIONS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+            </select>
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 text-sm">✕</button>
+          </div>
+        </div>
+
+        <div className="flex flex-1 overflow-hidden min-h-0">
+          {/* Fußballfeld */}
+          <div className="flex-1 relative overflow-hidden" style={{minWidth:0}}>
+            {/* Feld-Hintergrund */}
+            <div className="absolute inset-0 flex flex-col" style={{background:'linear-gradient(180deg,#2e7d32 0%,#388e3c 50%,#2e7d32 100%)'}}>
+              {/* Streifen */}
+              {Array.from({length:8}).map((_,i)=>(
+                <div key={i} style={{flex:1,background:i%2===0?'rgba(0,0,0,0.05)':'rgba(255,255,255,0.05)'}}/>
+              ))}
+            </div>
+            {/* Feldlinien SVG */}
+            <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <g stroke="rgba(255,255,255,0.8)" strokeWidth="0.5" fill="none">
+                <rect x="5" y="3" width="90" height="94"/>
+                <line x1="5" y1="50" x2="95" y2="50"/>
+                <circle cx="50" cy="50" r="10"/>
+                <circle cx="50" cy="50" r="0.8" fill="rgba(255,255,255,0.8)"/>
+                {/* Strafräume */}
+                <rect x="27" y="3" width="46" height="18"/>
+                <rect x="34" y="3" width="32" height="10"/>
+                <rect x="27" y="79" width="46" height="18"/>
+                <rect x="34" y="87" width="32" height="10"/>
+                {/* Halbkreise Strafraum */}
+                <path d="M 35 21 A 10 10 0 0 0 65 21" strokeDasharray="1,0.5"/>
+                <path d="M 35 79 A 10 10 0 0 1 65 79" strokeDasharray="1,0.5"/>
+                {/* Strafstoß-Punkt */}
+                <circle cx="50" cy="14" r="0.8" fill="rgba(255,255,255,0.8)" stroke="none"/>
+                <circle cx="50" cy="86" r="0.8" fill="rgba(255,255,255,0.8)" stroke="none"/>
+                {/* Eckbögen */}
+                <path d="M 5 5 Q 7 3 9 5"/><path d="M 91 5 Q 93 3 95 5"/>
+                <path d="M 5 95 Q 7 97 9 95"/><path d="M 91 95 Q 93 97 95 95"/>
+              </g>
+            </svg>
+
+            {/* Anweisung */}
+            {selected && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-black/70 text-white text-[10px] px-3 py-1 rounded-full z-10 whitespace-nowrap">
+                Spieler aus der Liste rechts auswählen
+              </div>
+            )}
+
+            {/* Spieler-Slots */}
+            {slots.map(slot=>{
+              const a = assigned[slot.id];
+              const isSelected = selected === slot.id;
+              return (
+                <div key={slot.id}
+                  onClick={()=>clickSlot(slot)}
+                  className="absolute flex flex-col items-center cursor-pointer"
+                  style={{left:`${slot.x}%`,top:`${slot.y}%`,transform:'translate(-50%,-50%)'}}>
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-[10px] font-bold border-2 transition-all shadow-lg
+                    ${isSelected?'border-yellow-400 ring-2 ring-yellow-300 scale-110':'border-white/60 hover:border-white hover:scale-105'}
+                    ${a ? '' : 'border-dashed'}`}
+                    style={{background:a?a.color||'#CC0000':'rgba(0,0,0,0.45)'}}>
+                    {a
+                      ? <span className="text-white drop-shadow">{a.number||initials(a.name)}</span>
+                      : <span className="text-white/60 text-[9px]">{slot.label}</span>
+                    }
+                    {a && (
+                      <button onClick={e=>removeSlot(slot.id,e)}
+                        className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[9px] flex items-center justify-center hover:bg-red-700 shadow">✕</button>
+                    )}
+                  </div>
+                  <div className="text-[9px] text-white/90 font-semibold mt-0.5 drop-shadow max-w-14 truncate text-center">
+                    {a ? a.name.split(' ').pop() : slot.label}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Spieler-Liste */}
+          <div className="w-36 flex flex-col border-l border-gray-100 bg-gray-50 flex-shrink-0 overflow-hidden">
+            <div className="px-3 py-2 border-b border-gray-100 flex-shrink-0">
+              <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Spieler</div>
+              <div className="text-[9px] text-gray-400">{attPlayers.length} verfügbar</div>
+            </div>
+            <div className="overflow-y-auto flex-1 p-2 space-y-1">
+              {attPlayers.map(p=>{
+                const inUse = usedIds.has(p.id);
+                return (
+                  <button key={p.id}
+                    onClick={()=>selected && !inUse && assignPlayer(p)}
+                    disabled={!selected || inUse}
+                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-left transition-all text-xs
+                      ${inUse?'opacity-40 cursor-default':selected?'hover:bg-red-50 hover:border-red-400 cursor-pointer border border-transparent':'cursor-default border border-transparent'}
+                      ${selected&&!inUse?'border-red-200 bg-white shadow-sm':''}`}>
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0"
+                      style={{background:p.color||'#CC0000'}}>
+                      {p.number||initials(p.name)}
+                    </div>
+                    <span className="truncate font-medium text-gray-700">{p.name.split(' ').pop()}</span>
+                    {inUse && <span className="text-[8px] text-green-500 ml-auto flex-shrink-0">✓</span>}
+                  </button>
+                );
+              })}
+              {attPlayers.length===0&&(
+                <p className="text-[10px] text-gray-400 text-center py-4">Keine Spieler haben zugesagt.</p>
+              )}
+            </div>
+            <div className="p-2 flex-shrink-0 border-t border-gray-100 space-y-1.5">
+              <div className="text-[9px] text-gray-400 text-center">{lineup.length}/11 gesetzt</div>
+              <Btn size="sm" className="w-full" onClick={saveLineup} disabled={saving}>
+                {saving?'…':'💾 Speichern'}
+              </Btn>
+              <button onClick={()=>setLineup([])} className="w-full text-[10px] text-gray-400 hover:text-gray-600">Zurücksetzen</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  TRAINER — SPIELE
 // ═══════════════════════════════════════════════════════════════════
 function TrainerSpiele({profile, show}) {
-  const [games, setGames] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({date:'',time:'15:00',opponent:'',location:'',home:true,scoreHome:'',scoreAway:'',notes:''});
+  const EMPTY_G = {date:'',time:'15:00',opponent:'',location:'',home:true,scoreHome:'',scoreAway:'',notes:''};
+  const [games,    setGames]   = useState([]);
+  const [players,  setPlayers] = useState([]);
+  const [open,     setOpen]    = useState(false);
+  const [editing,  setEditing] = useState(null);
+  const [form,     setForm]    = useState(EMPTY_G);
+  const [delGame,  setDelGame] = useState(null);
+  const [lineup,   setLineup]  = useState(null); // game object for lineup builder
 
-  useEffect(()=>{ return col('games').where('teamId','==',profile.teamId).orderBy('date','desc').onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
+  useEffect(()=>{
+    const u1=col('games').where('teamId','==',profile.teamId).onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.date?.localeCompare(a.date||''))));
+    const u2=col('users').where('teamId','==',profile.teamId).onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='player'||p.role==='dual')));
+    return ()=>{u1();u2();};
+  },[]);
 
-  const add = async (e) => {
+  const openNew  = () => { setEditing(null); setForm(EMPTY_G); setOpen(true); };
+  const openEdit = (g) => { setEditing(g.id); setForm({date:g.date||'',time:g.time||'15:00',opponent:g.opponent||'',location:g.location||'',home:!!g.home,scoreHome:g.scoreHome??'',scoreAway:g.scoreAway??'',notes:g.notes||''}); setOpen(true); };
+
+  const save = async (e) => {
     e.preventDefault();
-    await col('games').add({...form, teamId:profile.teamId, createdAt:ts()});
-    show('Spiel eingetragen ✅'); setForm({date:'',time:'15:00',opponent:'',location:'',home:true,scoreHome:'',scoreAway:'',notes:''}); setOpen(false);
+    if (editing) {
+      await col('games').doc(editing).update(form);
+      show('Spiel aktualisiert ✅');
+    } else {
+      await col('games').add({...form, teamId:profile.teamId, lineup:[], createdAt:ts()});
+      show('Spiel eingetragen ✅');
+    }
+    setForm(EMPTY_G); setOpen(false); setEditing(null);
+  };
+
+  const doDelete = async () => {
+    await col('games').doc(delGame).delete();
+    show('Spiel gelöscht'); setDelGame(null);
   };
 
   const badge = (g) => {
-    if(g.scoreHome===''||g.scoreHome===undefined) return null;
+    if(g.scoreHome===''||g.scoreHome===undefined||g.scoreHome===null) return null;
     const won = g.home ? Number(g.scoreHome)>Number(g.scoreAway) : Number(g.scoreAway)>Number(g.scoreHome);
     const draw = Number(g.scoreHome)===Number(g.scoreAway);
-    return <div className={`text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${draw?'bg-gray-100 text-gray-600':won?'bg-red-100 text-red-700':'bg-red-100 text-red-600'}`}>{g.scoreHome}:{g.scoreAway} {draw?'U':won?'S':'N'}</div>;
+    return <div className={`text-xs font-bold px-2.5 py-1 rounded-full ${draw?'bg-gray-100 text-gray-600':won?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{g.scoreHome}:{g.scoreAway} {draw?'U':won?'✓':'✗'}</div>;
   };
 
   const upcoming = games.filter(g=>g.date>=todayStr());
@@ -756,42 +1586,89 @@ function TrainerSpiele({profile, show}) {
 
   return (
     <div className="p-4">
-      <div className="flex items-center justify-between mb-4"><h1 className="text-lg font-semibold">Spiele</h1><Btn size="sm" onClick={()=>setOpen(true)}>+ Spiel</Btn></div>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-lg font-semibold">Spiele</h1>
+        <Btn size="sm" onClick={openNew}>+ Spiel</Btn>
+      </div>
+
+      {delGame && (
+        <Modal title="Spiel löschen?" onClose={()=>setDelGame(null)}>
+          <p className="text-sm text-gray-600 mb-4">Dieses Spiel wirklich löschen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelGame(null)}>Abbrechen</Btn>
+            <Btn className="flex-1 bg-red-700" onClick={doDelete}>Löschen</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {lineup && (
+        <LineupBuilder game={lineup} players={players} profile={profile} onClose={()=>setLineup(null)} show={show}/>
+      )}
+
       {open && (
-        <Modal title="Spiel eintragen" onClose={()=>setOpen(false)}>
-          <form onSubmit={add}>
-            <div className="flex gap-2"><Inp label="Datum" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/><Inp label="Zeit" type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/></div>
+        <Modal title={editing?'Spiel bearbeiten':'Spiel eintragen'} onClose={()=>{setOpen(false);setEditing(null);}}>
+          <form onSubmit={save}>
+            <div className="flex gap-2">
+              <Inp label="Datum" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/>
+              <Inp label="Zeit" type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/>
+            </div>
             <Inp label="Gegner" value={form.opponent} onChange={e=>setForm({...form,opponent:e.target.value})} placeholder="FC Musterstadt" required/>
             <Inp label="Ort" value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Sportstadion"/>
-            <label className="flex items-center gap-2 text-sm text-gray-600 mb-3 cursor-pointer"><input type="checkbox" checked={form.home} onChange={e=>setForm({...form,home:e.target.checked})} className="accent-red-600"/> Heimspiel</label>
+            <label className="flex items-center gap-2 text-sm text-gray-600 mb-3 cursor-pointer">
+              <input type="checkbox" checked={form.home} onChange={e=>setForm({...form,home:e.target.checked})} className="accent-red-600"/> Heimspiel
+            </label>
             <div className="flex items-center gap-2 mb-3">
-              <input type="number" min="0" placeholder="Heim" value={form.scoreHome} onChange={e=>setForm({...form,scoreHome:e.target.value})} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+              <input type="number" min="0" placeholder="Heim" value={form.scoreHome} onChange={e=>setForm({...form,scoreHome:e.target.value})}
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
               <span className="text-gray-400 font-bold text-lg">:</span>
-              <input type="number" min="0" placeholder="Gast" value={form.scoreAway} onChange={e=>setForm({...form,scoreAway:e.target.value})} className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+              <input type="number" min="0" placeholder="Gast" value={form.scoreAway} onChange={e=>setForm({...form,scoreAway:e.target.value})}
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
             </div>
             <Txt label="Notizen" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows={2}/>
-            <div className="flex gap-2"><Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn><Btn type="submit" className="flex-1">Speichern</Btn></div>
+            <div className="flex gap-2">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>{setOpen(false);setEditing(null);}}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1">{editing?'Aktualisieren':'Speichern'}</Btn>
+            </div>
           </form>
         </Modal>
       )}
-      {games.length===0 ? <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">🏆</div><p className="text-sm">Noch keine Spiele eingetragen.</p></div> : (
+
+      {games.length===0 ? (
+        <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">🏆</div><p className="text-sm">Noch keine Spiele eingetragen.</p></div>
+      ) : (
         <div className="space-y-2">
-          {upcoming.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>{upcoming.map(g=><GameCard key={g.id} g={g} badge={badge}/>)}</>}
-          {past.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>{past.map(g=><GameCard key={g.id} g={g} badge={badge} faded/>)}</>}
+          {upcoming.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
+            {upcoming.map(g=><GameCard key={g.id} g={g} badge={badge} onEdit={openEdit} onDelete={()=>setDelGame(g.id)} onLineup={()=>setLineup(g)}/>)}</>}
+          {past.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
+            {past.map(g=><GameCard key={g.id} g={g} badge={badge} faded onEdit={openEdit} onDelete={()=>setDelGame(g.id)} onLineup={()=>setLineup(g)}/>)}</>}
         </div>
       )}
     </div>
   );
 }
 
-const GameCard = ({g, badge, faded=false}) => (
-  <div className={`border rounded-xl p-4 flex items-center justify-between gap-3 ${faded?'bg-gray-50 border-gray-200 opacity-70':'bg-white border-gray-200'}`}>
-    <div className="min-w-0">
-      <div className="text-sm font-semibold">vs. {g.opponent}</div>
-      <div className="text-xs text-gray-400 mt-0.5">{fmtDate(g.date)} · {g.time}{g.location?' · '+g.location:''} · {g.home?'🏠 Heim':'✈️ Auswärts'}</div>
-      {g.notes&&<p className="text-xs text-gray-500 mt-1">{g.notes}</p>}
+const GameCard = ({g, badge, faded=false, onEdit, onDelete, onLineup}) => (
+  <div className={`border rounded-xl p-4 ${faded?'bg-gray-50 border-gray-200 opacity-80':'bg-white border-gray-200'}`}>
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
+        <div className="text-sm font-semibold">vs. {g.opponent}</div>
+        <div className="text-xs text-gray-400 mt-0.5">{fmtDate(g.date)} · {g.time}{g.location?' · '+g.location:''} · {g.home?'🏠 Heim':'✈️ Auswärts'}</div>
+        {g.notes&&<p className="text-xs text-gray-500 mt-1">{g.notes}</p>}
+      </div>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {badge(g)}
+        <button onClick={()=>onLineup(g)} title="Aufstellung" className="text-sm px-2 py-1 border border-gray-200 rounded-lg hover:border-red-400 hover:bg-red-50 transition-colors">🟢</button>
+        <button onClick={()=>onEdit(g)} className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50">✏️</button>
+        <button onClick={onDelete} className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50">🗑</button>
+      </div>
     </div>
-    {badge(g)}
+    {g.lineup?.length>0 && (
+      <div className="mt-2 flex gap-1 flex-wrap">
+        {g.lineup.map((p,i)=>(
+          <span key={i} className="text-[10px] bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded-full">{p.name}</span>
+        ))}
+      </div>
+    )}
   </div>
 );
 
@@ -805,8 +1682,8 @@ function TrainerVerletzungen({profile, show}) {
   const [form, setForm] = useState({playerId:'',type:'',bodyPart:'',since:'',expectedReturn:'',notes:''});
 
   useEffect(()=>{
-    const u1=col('injuries').where('teamId','==',profile.teamId).orderBy('since','desc').onSnapshot(s=>setInjuries(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=col('users').where('teamId','==',profile.teamId).where('role','==','player').orderBy('name').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u1=col('injuries').where('teamId','==',profile.teamId).onSnapshot(s=>setInjuries(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.since?.localeCompare(a.since||''))));
+    const u2=col('users').where('teamId','==',profile.teamId).where('role','==','player').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
     return ()=>{u1();u2();};
   },[]);
 
@@ -893,8 +1770,8 @@ function TrainerBeurteilungen({profile, show}) {
   const [notes, setNotes] = useState('');
 
   useEffect(()=>{
-    const u1=col('users').where('teamId','==',profile.teamId).where('role','==','player').orderBy('name').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=col('ratings').where('teamId','==',profile.teamId).orderBy('createdAt','desc').onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u1=col('users').where('teamId','==',profile.teamId).where('role','==','player').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+    const u2=col('ratings').where('teamId','==',profile.teamId).onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.createdAt?.seconds-a.createdAt?.seconds)));
     return ()=>{u1();u2();};
   },[]);
 
@@ -971,9 +1848,9 @@ function ChatPage({profile, accent='red'}) {
   const bubbleColor  = 'bg-red-600';
 
   useEffect(()=>{
-    return col('chat').where('teamId','==',profile.teamId).orderBy('createdAt')
+    return col('chat').where('teamId','==',profile.teamId)
       .onSnapshot(s=>{
-        setMessages(s.docs.map(d=>({id:d.id,...d.data()})));
+        setMessages(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.createdAt?.seconds-b.createdAt?.seconds));
         setTimeout(()=>bottomRef.current?.scrollIntoView({behavior:'smooth'}),50);
       });
   },[]);
@@ -1036,20 +1913,51 @@ function TrainerApp({profile}) {
   const [page, setPage] = useState('kader');
   const {show, Container} = useToast();
 
+  // Multi-team support: use trainerTeamIds if available, else fall back to single trainerTeamId
+  const trainerTeamIds = profile.trainerTeamIds?.length ? profile.trainerTeamIds
+    : (profile.trainerTeamId ? [profile.trainerTeamId] : (profile.teamId ? [profile.teamId] : []));
+  const [activeTeamId, setActiveTeamId] = useState(trainerTeamIds[0]||profile.teamId||'');
+  const activeProfile = {...profile, teamId: activeTeamId};
+
   const nav = [
-    {section:'Team', items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
-    {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
+    {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
+    {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'}]},
   ];
 
+  // Team name lookup
+  const [teamNames, setTeamNames] = useState({});
+  useEffect(()=>{
+    if(trainerTeamIds.length<2) return;
+    getDocs_(col('teams')).then(ts=>setTeamNames(Object.fromEntries(ts.map(t=>[t.id,t.name]))));
+  },[]);
+
+  const TeamSwitcher = () => {
+    if(trainerTeamIds.length < 2) return null;
+    return (
+      <div className="flex gap-1.5 px-4 py-2 overflow-x-auto border-b border-gray-100 bg-white">
+        {trainerTeamIds.map(id=>(
+          <button key={id} onClick={()=>setActiveTeamId(id)}
+            className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-semibold transition-colors ${activeTeamId===id?'bg-red-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+            {teamNames[id]||id}
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   const content = {
-    kader:          <TrainerKader profile={profile} show={show}/>,
-    spiele:         <TrainerSpiele profile={profile} show={show}/>,
-    training:       <TrainerTraining profile={profile} show={show}/>,
-    taktikboard:    <Taktikboard profile={profile} show={show}/>,
-    verletzungen:   <TrainerVerletzungen profile={profile} show={show}/>,
-    beurteilungen:  <TrainerBeurteilungen profile={profile} show={show}/>,
-    chat:           <ChatPage profile={profile} accent="red"/>,
+    kader:         <><TeamSwitcher/><TrainerKader         key={activeTeamId} profile={activeProfile} show={show}/></>,
+    spiele:        <><TeamSwitcher/><TrainerSpiele        key={activeTeamId} profile={activeProfile} show={show}/></>,
+    training:      <><TeamSwitcher/><TrainerTraining      key={activeTeamId} profile={activeProfile} show={show}/></>,
+    taktikboard:   <><TeamSwitcher/><Taktikboard          key={activeTeamId} profile={activeProfile} show={show}/></>,
+    verletzungen:  <><TeamSwitcher/><TrainerVerletzungen  key={activeTeamId} profile={activeProfile} show={show}/></>,
+    beurteilungen: <><TeamSwitcher/><TrainerBeurteilungen key={activeTeamId} profile={activeProfile} show={show}/></>,
+    chat:          <><TeamSwitcher/><ChatPage             key={activeTeamId} profile={activeProfile} accent="red"/></>,
+    busplanung:    <TrainerBusplanung profile={activeProfile} show={show}/>,
+    dokumente:     <TrainerDokumente/>,
+    vorstand:      <TrainerNachrichtAnVorstand profile={profile}/>,
   };
 
   return (
@@ -1068,7 +1976,7 @@ function PlayerTraining({profile}) {
   const [attendance, setAttendance] = useState({});
 
   useEffect(()=>{
-    return col('sessions').where('teamId','==',profile.teamId).orderBy('date')
+    return col('sessions').where('teamId','==',profile.teamId)
       .onSnapshot(async s=>{
         const sess=s.docs.map(d=>({id:d.id,...d.data()}));
         setSessions(sess);
@@ -1144,8 +2052,8 @@ function PlayerWellness({profile}) {
   ];
 
   useEffect(()=>{
-    return col('wellness').where('userId','==',profile.id).orderBy('createdAt','desc').limit(10)
-      .onSnapshot(s=>setHistory(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return col('wellness').where('userId','==',profile.id).limit(20)
+      .onSnapshot(s=>setHistory(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.createdAt?.seconds-a.createdAt?.seconds)));
   },[]);
 
   const todayEntry = history.find(h=>h.date===todayStr());
@@ -1210,7 +2118,7 @@ function PlayerWellness({profile}) {
 // ═══════════════════════════════════════════════════════════════════
 function PlayerStats({profile}) {
   const [ratings, setRatings] = useState([]);
-  useEffect(()=>{ return col('ratings').where('playerId','==',profile.id).orderBy('createdAt','desc').onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
+  useEffect(()=>{ return col('ratings').where('playerId','==',profile.id).onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.createdAt?.seconds-a.createdAt?.seconds))); },[]);
 
   const avg = ratings.length>0 ? (ratings.reduce((s,r)=>s+r.avg,0)/ratings.length).toFixed(2) : null;
   const catAvgs = RATING_CATS.map(cat=>({cat,val:ratings.length>0?(ratings.reduce((s,r)=>s+(r.scores?.[cat]||0),0)/ratings.length).toFixed(1):null}));
@@ -1363,70 +2271,282 @@ function AdminTeams({show}) {
 //  ADMIN — TRAINER VERWALTEN
 // ═══════════════════════════════════════════════════════════════════
 function AdminTrainer({show}) {
-  const [trainers, setTrainers] = useState([]);
-  const [teams,    setTeams]    = useState([]);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({name:'',email:'',pw:'',teamId:''});
-  const [loading, setLoading] = useState(false);
+  const [trainers,    setTrainers]    = useState([]);
+  const [allUsers,    setAllUsers]    = useState([]);
+  const [teams,       setTeams]       = useState([]);
+  const [open,        setOpen]        = useState(false);
+  const [editTeams,   setEditTeams]   = useState(null); // user doc
+  const [editRole,    setEditRole]    = useState(null); // user doc
+  const [form,        setForm]        = useState({name:'',email:'',pw:'',teamId:''});
+  const [loading,     setLoading]     = useState(false);
+  const [selRole,     setSelRole]     = useState('');
+
+  const ROLES_ALL = [
+    {v:'player',           l:'Spieler'},
+    {v:'trainer',          l:'Trainer'},
+    {v:'dual',             l:'Trainer & Spieler'},
+    {v:'vorstand',         l:'Vorstand'},
+    {v:'vorstand_trainer', l:'Vorstand & Trainer'},
+  ];
 
   useEffect(()=>{
-    // Zeige sowohl Trainer als auch Vorstand-Mitglieder
-    const u1=col('users').where('role','in',['trainer','vorstand']).onSnapshot(s=>setTrainers(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=col('teams').orderBy('name').onSnapshot(s=>setTeams(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{u1();u2();};
+    const u1=col('users').where('role','in',['trainer','dual','vorstand','vorstand_trainer']).onSnapshot(s=>setTrainers(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=col('users').onSnapshot(s=>setAllUsers(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3=col('teams').orderBy('name').onSnapshot(s=>setTeams(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();u3();};
   },[]);
 
   const add = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-      const {user}=await auth.createUserWithEmailAndPassword(form.email, form.pw);
-      await col('users').doc(user.uid).set({name:form.name,email:form.email,role:'trainer',teamId:form.teamId,color:randColor(),createdAt:ts()});
+      const user = await createUser(form.email, form.pw);
+      await col('users').doc(user.uid).set({
+        name:form.name, email:form.email, role:'trainer',
+        teamId:form.teamId, trainerTeamId:form.teamId,
+        trainerTeamIds: form.teamId ? [form.teamId] : [],
+        status:'active', color:randColor(), createdAt:ts()
+      });
       show('Trainer angelegt ✅'); setForm({name:'',email:'',pw:'',teamId:''}); setOpen(false);
     } catch(err) { show(err.message,'error'); }
     setLoading(false);
   };
 
+  // Save team assignments — handles both trainer and dual
+  const saveTeams = async (userId, data) => {
+    // data = { trainerTeamIds: [], playerTeamId: '' }  for dual
+    //       = { trainerTeamIds: [] }                    for trainer
+    const primary = data.trainerTeamIds[0]||'';
+    const update = {
+      trainerTeamId:  primary,
+      trainerTeamIds: data.trainerTeamIds,
+    };
+    if (data.playerTeamId !== undefined) {
+      update.teamId = data.playerTeamId;
+    } else {
+      update.teamId = primary; // trainer: teamId = primary trainer team
+    }
+    await col('users').doc(userId).update(update);
+    show('Teams aktualisiert ✅');
+    setEditTeams(null);
+  };
+
+  // Save role change
+  const saveRole = async () => {
+    if(!selRole || !editRole) return;
+    setLoading(true);
+    await col('users').doc(editRole.id).update({role: selRole, status:'active'});
+    show('Rolle geändert ✅');
+    setEditRole(null); setSelRole(''); setLoading(false);
+  };
+
   const teamMap = Object.fromEntries(teams.map(t=>[t.id,t.name]));
+
+  // All users (including players) for role-change list
+  const allSorted = [...allUsers].sort((a,b)=>(a.name||'').localeCompare(b.name||''));
 
   return (
     <div className="p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-lg font-semibold">Trainer ({trainers.length})</h1>
-        <Btn size="sm" variant="purple" onClick={()=>setOpen(true)}>+ Trainer</Btn>
-      </div>
+
+      {/* Edit teams modal */}
+      {editTeams && (
+        <TrainerTeamsModal
+          user={editTeams} teams={teams}
+          onSave={data=>saveTeams(editTeams.id,data)}
+          onClose={()=>setEditTeams(null)}
+        />
+      )}
+
+      {/* Edit role modal */}
+      {editRole && (
+        <Modal title={`Rolle ändern: ${editRole.name}`} onClose={()=>{setEditRole(null);setSelRole('');}}>
+          <p className="text-xs text-gray-500 mb-3">Aktuelle Rolle: <strong>{ROLES_ALL.find(r=>r.v===editRole.role)?.l || editRole.role}</strong></p>
+          <div className="space-y-2 mb-4">
+            {ROLES_ALL.map(r=>(
+              <button key={r.v} onClick={()=>setSelRole(r.v)}
+                className={`w-full text-left px-4 py-2.5 rounded-xl border-2 text-sm font-medium transition-all ${selRole===r.v?'border-red-500 bg-red-50 text-red-700':'border-gray-200 hover:border-gray-300'}`}>
+                {r.l}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>{setEditRole(null);setSelRole('');}}>Abbrechen</button>
+            <button onClick={saveRole} disabled={!selRole||loading}
+              className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold disabled:opacity-40">
+              {loading?'…':'Speichern'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Add trainer modal */}
       {open && (
         <Modal title="Trainer anlegen" onClose={()=>setOpen(false)}>
           <form onSubmit={add}>
             <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/>
             <Inp label="E-Mail" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} required/>
             <Inp label="Passwort" type="password" value={form.pw} onChange={e=>setForm({...form,pw:e.target.value})} required minLength={6}/>
-            <Sel label="Team zuweisen" value={form.teamId} onChange={e=>setForm({...form,teamId:e.target.value})}>
+            <Sel label="Primäres Team" value={form.teamId} onChange={e=>setForm({...form,teamId:e.target.value})}>
               <option value="">Team wählen…</option>
               {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
             </Sel>
-            <div className="flex gap-2"><Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn><Btn type="submit" variant="purple" className="flex-1" disabled={loading}>{loading?'…':'Anlegen'}</Btn></div>
+            <div className="flex gap-2">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn>
+              <Btn type="submit" variant="purple" className="flex-1" disabled={loading}>{loading?'…':'Anlegen'}</Btn>
+            </div>
           </form>
         </Modal>
       )}
-      {trainers.length===0 ? <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">👨‍💼</div><p className="text-sm">Noch keine Trainer vorhanden.</p></div> : (
-        <div className="space-y-2">
-          {trainers.map(t=>(
-            <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-3">
-              <Avatar name={t.name} color={t.color} size="sm"/>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold truncate">{t.name}</div>
-                  {t.role==='vorstand'&&<span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0">Vorstand</span>}
+
+      {/* Trainer list */}
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-lg font-semibold">Trainer & Rollen</h1>
+        <Btn size="sm" variant="purple" onClick={()=>setOpen(true)}>+ Trainer</Btn>
+      </div>
+
+      {/* Trainer section */}
+      <div className="mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Trainer / Vorstand</div>
+      {trainers.length===0 ? (
+        <div className="text-center text-gray-400 py-8 mb-4"><p className="text-sm">Noch keine Trainer.</p></div>
+      ) : (
+        <div className="space-y-2 mb-6">
+          {trainers.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(t=>{
+            const tIds = t.trainerTeamIds?.length ? t.trainerTeamIds : (t.trainerTeamId ? [t.trainerTeamId] : []);
+            return (
+              <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-3">
+                <div className="flex items-start gap-3">
+                  <Avatar name={t.name} color={t.color} size="sm"/>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="text-sm font-semibold">{t.name}</div>
+                      <span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-semibold">
+                        {ROLES_ALL.find(r=>r.v===t.role)?.l||t.role}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-400 mb-1.5">{t.email}</div>
+                    {tIds.length>0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {tIds.map(id=>(
+                          <span key={id} className="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
+                            {teamMap[id]||id}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[11px] text-amber-500">Kein Team zugewiesen</span>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-1 flex-shrink-0">
+                    <button onClick={()=>setEditTeams(t)}
+                      className="text-xs px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors whitespace-nowrap">
+                      🏟️ Teams
+                    </button>
+                    <button onClick={()=>{setEditRole(t);setSelRole(t.role);}}
+                      className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap">
+                      🔄 Rolle
+                    </button>
+                  </div>
                 </div>
-                <div className="text-xs text-gray-400 truncate">{t.email}</div>
-                {t.teamId&&<div className="text-xs text-purple-600">{teamMap[t.teamId]||'–'}</div>}
-                {!t.teamId&&t.role!=='vorstand'&&<div className="text-xs text-amber-500">Kein Team zugewiesen</div>}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
+
+      {/* All users — role change */}
+      <div className="mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Alle Nutzer — Rolle ändern</div>
+      <div className="space-y-1.5">
+        {allSorted.filter(u=>!['trainer','dual','vorstand','vorstand_trainer'].includes(u.role)).map(u=>(
+          <div key={u.id} className="bg-white border border-gray-200 rounded-xl px-3 py-2 flex items-center gap-3">
+            <Avatar name={u.name} color={u.color} size="sm"/>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium truncate">{u.name}</div>
+              <div className="text-xs text-gray-400">{ROLES_ALL.find(r=>r.v===u.role)?.l||u.role}</div>
+            </div>
+            <button onClick={()=>{setEditRole(u);setSelRole(u.role);}}
+              className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0">
+              🔄 Rolle
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
+  );
+}
+
+function TrainerTeamsModal({user, teams, onSave, onClose}) {
+  const isDual = user.role === 'dual';
+  const existingTrainer = user.trainerTeamIds?.length ? user.trainerTeamIds : (user.trainerTeamId ? [user.trainerTeamId] : []);
+  const existingPlayer  = user.teamId || '';
+
+  const [trainerIds,  setTrainerIds]  = useState(existingTrainer);
+  const [playerTeamId, setPlayerTeamId] = useState(existingPlayer);
+
+  const toggleTrainer = (id) => setTrainerIds(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+
+  const handleSave = () => {
+    if (isDual) {
+      onSave({ trainerTeamIds: trainerIds, playerTeamId });
+    } else {
+      onSave({ trainerTeamIds: trainerIds });
+    }
+  };
+
+  return (
+    <Modal title={`Teams für ${user.name}`} onClose={onClose}>
+
+      {/* Trainer teams section */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-sm font-semibold">📋 Als Trainer</span>
+          <span className="text-[10px] text-gray-400">Mehrfachauswahl möglich</span>
+        </div>
+        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+          {teams.map(t=>{
+            const sel = trainerIds.includes(t.id);
+            const idx = trainerIds.indexOf(t.id);
+            return (
+              <button key={t.id} onClick={()=>toggleTrainer(t.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border-2 text-sm font-medium transition-all text-left ${sel?'border-blue-500 bg-blue-50':'border-gray-200 hover:border-gray-300'}`}>
+                <span className={`w-5 h-5 rounded flex items-center justify-center text-xs font-bold flex-shrink-0 ${sel?'bg-blue-500 text-white':'bg-gray-100 text-gray-400'}`}>
+                  {sel ? (idx===0?'★':idx+1) : ''}
+                </span>
+                <span className="flex-1">{t.name}</span>
+                {sel && idx===0 && <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">Primär</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Player team section — only for dual */}
+      {isDual && (
+        <div className="mb-4 border-t pt-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-semibold">⚽ Als Spieler</span>
+            <span className="text-[10px] text-gray-400">Ein Team wählen</span>
+          </div>
+          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            {teams.map(t=>(
+              <button key={t.id} onClick={()=>setPlayerTeamId(t.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl border-2 text-sm font-medium transition-all text-left ${playerTeamId===t.id?'border-green-500 bg-green-50':'border-gray-200 hover:border-gray-300'}`}>
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs flex-shrink-0 ${playerTeamId===t.id?'bg-green-500 text-white':'bg-gray-100'}`}>
+                  {playerTeamId===t.id?'✓':''}
+                </span>
+                <span>{t.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button className="flex-1 py-2 rounded-lg border text-sm" onClick={onClose}>Abbrechen</button>
+        <button onClick={handleSave}
+          className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
+          Speichern
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1502,7 +2622,7 @@ function AdminOverview() {
     <div className="p-4">
       <h1 className="text-lg font-semibold mb-4">Vereinsübersicht</h1>
       <div className="grid grid-cols-2 gap-3 mb-6">
-        {[{l:'Teams',v:stats.teams,i:'🏟️'},{l:'Trainer',v:stats.trainers,i:'👨‍💼'},{l:'Spieler',v:stats.players,i:'👤'},{l:'Trainings',v:stats.sessions,i:'📅'}].map(s=>(
+        {[{l:'Teams',v:stats.teams,i:'🏟️'},{l:'Trainer',v:stats.trainers,i:'👨‍💼'},{l:'Spieler',v:stats.players,i:'👤'}].map(s=>(
           <div key={s.l} className="bg-white border border-gray-200 rounded-2xl p-5">
             <div className="text-2xl mb-1">{s.i}</div>
             <div className="text-3xl font-bold text-purple-600">{s.v}</div>
@@ -1524,24 +2644,1121 @@ function AdminOverview() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  ADMIN — DOKUMENTE (Vorstand lädt hoch, Trainer sieht es)
+// ═══════════════════════════════════════════════════════════════════
+const FILE_ICONS = {
+  'application/pdf':'📄', 'image/':'🖼️',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml':'📝',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml':'📊',
+  'application/vnd.openxmlformats-officedocument.presentationml':'📊',
+  'default':'📎'
+};
+const fileIcon = (type='') => {
+  for(const [k,v] of Object.entries(FILE_ICONS)) if(type.startsWith(k)) return v;
+  return FILE_ICONS.default;
+};
+const fmtSize = (b) => b>1048576 ? (b/1048576).toFixed(1)+' MB' : (b/1024).toFixed(0)+' KB';
+
+function AdminDokumente({profile, show}) {
+  const [docs,     setDocs]     = useState([]);
+  const [open,     setOpen]     = useState(false);
+  const [file,     setFile]     = useState(null);
+  const [form,     setForm]     = useState({name:'', category:'Allgemein', notes:''});
+  const [progress, setProgress] = useState(0);
+  const [uploading,setUploading]= useState(false);
+  const fileRef = useRef(null);
+  const CATS = ['Allgemein','Training','Verwaltung','Satzung','Finanzen','Sonstiges'];
+
+  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
+
+  const upload = async (e) => {
+    e.preventDefault();
+    if (!file) { show('Bitte eine Datei wählen','error'); return; }
+    setUploading(true); setProgress(0);
+    try {
+      const path = `dokumente/${Date.now()}_${file.name}`;
+      const ref  = storage.ref(path);
+      const task = ref.put(file);
+      task.on('state_changed', snap => setProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)));
+      await task;
+      const url = await ref.getDownloadURL();
+      await col('dokumente').add({
+        name: form.name || file.name,
+        category: form.category,
+        notes: form.notes,
+        fileUrl: url,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+        uploadedBy: profile.name,
+        createdAt: ts()
+      });
+      show('Dokument hochgeladen ✅');
+      setForm({name:'',category:'Allgemein',notes:''}); setFile(null); setProgress(0); setOpen(false);
+    } catch(err) { show(err.message,'error'); }
+    setUploading(false);
+  };
+
+  const del = async (doc) => {
+    if(!confirm('Dokument löschen?')) return;
+    try { await storage.refFromURL(doc.fileUrl).delete(); } catch{}
+    await col('dokumente').doc(doc.id).delete();
+    show('Gelöscht');
+  };
+
+  const grouped = CATS.reduce((a,c)=>{a[c]=docs.filter(d=>d.category===c);return a;},{});
+
+  return (
+    <div className="p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div><h1 className="text-lg font-semibold">Dokumente</h1><p className="text-xs text-gray-400">{docs.length} Dateien</p></div>
+        <Btn size="sm" variant="purple" onClick={()=>setOpen(true)}>+ Hochladen</Btn>
+      </div>
+      {open && (
+        <Modal title="Dokument hochladen" onClose={()=>!uploading&&setOpen(false)}>
+          <form onSubmit={upload}>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Datei *</label>
+              <div onClick={()=>fileRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${file?'border-purple-400 bg-purple-50':'border-gray-200 hover:border-gray-300'}`}>
+                {file ? (
+                  <div><div className="text-3xl">{fileIcon(file.type)}</div><div className="text-sm font-medium mt-1">{file.name}</div><div className="text-xs text-gray-400">{fmtSize(file.size)}</div></div>
+                ) : (
+                  <div><div className="text-3xl text-gray-300">📎</div><div className="text-sm text-gray-400 mt-1">Klicken zum Auswählen</div></div>
+                )}
+                <input ref={fileRef} type="file" className="hidden" onChange={e=>setFile(e.target.files[0]||null)}/>
+              </div>
+            </div>
+            <Inp label="Anzeigename (optional)" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Automatisch aus Dateiname"/>
+            <Sel label="Kategorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{CATS.map(c=><option key={c}>{c}</option>)}</Sel>
+            <Txt label="Notiz (optional)" rows={2} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+            {uploading && (
+              <div className="mb-3">
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-purple-600 rounded-full transition-all" style={{width:progress+'%'}}/></div>
+                <div className="text-xs text-gray-400 mt-1 text-center">{progress}% hochgeladen…</div>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)} disabled={uploading}>Abbrechen</Btn>
+              <Btn type="submit" variant="purple" className="flex-1" disabled={uploading||!file}>{uploading?'Lädt hoch…':'Hochladen'}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {docs.length===0 ? (
+        <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📁</div><p className="text-sm">Noch keine Dokumente hochgeladen.</p></div>
+      ) : (
+        <div className="space-y-5">
+          {CATS.map(cat => grouped[cat].length>0 && (
+            <div key={cat}>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{cat}</div>
+              <div className="space-y-2">
+                {grouped[cat].map(doc=>(
+                  <div key={doc.id} className="bg-white border border-gray-200 rounded-xl p-3.5 flex items-center gap-3 group">
+                    <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center text-xl flex-shrink-0">{fileIcon(doc.fileType)}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{doc.name||doc.fileName}</div>
+                      <div className="text-xs text-gray-400">{doc.fileName} · {fmtSize(doc.fileSize)} · {doc.uploadedBy}</div>
+                      {doc.notes&&<div className="text-xs text-gray-500 mt-0.5 italic">{doc.notes}</div>}
+                    </div>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <a href={doc.fileUrl} target="_blank" rel="noopener" className="w-8 h-8 bg-purple-50 hover:bg-purple-100 rounded-lg flex items-center justify-center text-purple-600 transition-colors text-sm">↗</a>
+                      <button onClick={()=>del(doc)} className="w-8 h-8 bg-gray-50 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all text-sm">✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DOKUMENTE — TRAINER ANSICHT (nur lesen/herunterladen)
+// ═══════════════════════════════════════════════════════════════════
+function TrainerDokumente() {
+  const [docs, setDocs] = useState([]);
+  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
+  const CATS = ['Allgemein','Training','Verwaltung','Satzung','Finanzen','Sonstiges'];
+  const grouped = CATS.reduce((a,c)=>{a[c]=docs.filter(d=>d.category===c);return a;},{});
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-4">📁 Dokumente</h1>
+      {docs.length===0 ? (
+        <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📁</div><p className="text-sm">Noch keine Dokumente vom Vorstand.</p></div>
+      ) : (
+        <div className="space-y-5">
+          {CATS.map(cat => grouped[cat].length>0 && (
+            <div key={cat}>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{cat} ({grouped[cat].length})</div>
+              <div className="space-y-2">
+                {grouped[cat].map(doc=>(
+                  <a key={doc.id} href={doc.fileUrl} target="_blank" rel="noopener"
+                    className="flex items-center gap-3 bg-white border border-gray-200 hover:border-red-300 hover:bg-red-50 rounded-xl p-3.5 transition-all group">
+                    <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center text-xl flex-shrink-0">{fileIcon(doc.fileType)}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{doc.name||doc.fileName}</div>
+                      <div className="text-xs text-gray-400">{fmtSize(doc.fileSize)} · {fmtAgo(doc.createdAt)}</div>
+                      {doc.notes&&<div className="text-xs text-gray-500 italic mt-0.5">{doc.notes}</div>}
+                    </div>
+                    <span className="text-gray-300 group-hover:text-red-500 transition-colors text-lg flex-shrink-0">↗</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  NACHRICHTEN VORSTAND → TRAINER (bidirektional)
+// ═══════════════════════════════════════════════════════════════════
+function VorstandNachrichten({profile}) {
+  const [threads,  setThreads]  = useState([]);  // je Trainer eine Konversation
+  const [sel,      setSel]      = useState(null); // ausgewählter Trainer
+  const [msgs,     setMsgs]     = useState([]);
+  const [text,     setText]     = useState('');
+  const bottomRef = useRef(null);
+
+  // Alle Trainer laden
+  const [trainers, setTrainers] = useState([]);
+  useEffect(()=>{
+    col('users').where('role','in',['trainer','dual']).onSnapshot(s=>setTrainers(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[]);
+
+  // Nachrichten für den ausgewählten Trainer
+  useEffect(()=>{
+    if(!sel) return;
+    return col('nachrichten')
+      .where('threadId','==', [profile.id,sel.id].sort().join('_'))
+      .orderBy('createdAt')
+      .onSnapshot(s=>{
+        setMsgs(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.createdAt?.seconds-b.createdAt?.seconds));
+        setTimeout(()=>bottomRef.current?.scrollIntoView({behavior:'smooth'}),50);
+      });
+  },[sel]);
+
+  // Ungelesene pro Trainer zählen
+  const [unread, setUnread] = useState({});
+  useEffect(()=>{
+    return col('nachrichten').where('receiverId','==',profile.id).where('read','==',false)
+      .onSnapshot(s=>{
+        const u={};
+        s.docs.forEach(d=>{ const tid=d.data().senderId; u[tid]=(u[tid]||0)+1; });
+        setUnread(u);
+      });
+  },[]);
+
+  const send = async (e) => {
+    e.preventDefault(); if(!text.trim()||!sel) return;
+    const threadId=[profile.id,sel.id].sort().join('_');
+    await col('nachrichten').add({
+      threadId, text:text.trim(),
+      senderId:profile.id, senderName:profile.name, senderRole:'vorstand',
+      receiverId:sel.id, read:false, createdAt:ts()
+    });
+    // Empfänger-Nachrichten als gelesen markieren
+    const unreadSnap=await col('nachrichten').where('threadId','==',threadId).where('receiverId','==',profile.id).where('read','==',false).get();
+    unreadSnap.forEach(d=>d.ref.update({read:true}));
+    setText('');
+  };
+
+  const openThread = async (trainer) => {
+    setSel(trainer);
+    // Als gelesen markieren
+    const threadId=[profile.id,trainer.id].sort().join('_');
+    const snap=await col('nachrichten').where('threadId','==',threadId).where('receiverId','==',profile.id).where('read','==',false).get();
+    snap.forEach(d=>d.ref.update({read:true}));
+  };
+
+  if(!sel) return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-4">💬 Nachrichten</h1>
+      {trainers.length===0 ? <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">💬</div><p className="text-sm">Noch keine Trainer vorhanden.</p></div> : (
+        <div className="space-y-2">
+          {trainers.map(t=>(
+            <button key={t.id} onClick={()=>openThread(t)}
+              className="w-full flex items-center gap-3 bg-white border border-gray-200 hover:border-purple-300 rounded-xl p-3.5 text-left transition-all">
+              <div className="relative flex-shrink-0">
+                <Avatar name={t.name} color={t.color} size="sm"/>
+                {unread[t.id]>0 && <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-white text-[9px] font-bold flex items-center justify-center">{unread[t.id]}</div>}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">{t.name}</div>
+                <div className="text-xs text-gray-400">{t.role==='dual'?'Trainer & Spieler':'Trainer'}</div>
+              </div>
+              <span className="ml-auto text-gray-300">›</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col" style={{height:'calc(100vh - 56px)'}}>
+      <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-shrink-0 bg-white">
+        <button onClick={()=>setSel(null)} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
+        <Avatar name={sel.name} color={sel.color} size="sm"/>
+        <div><div className="text-sm font-semibold">{sel.name}</div><div className="text-xs text-gray-400">Trainer</div></div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {msgs.length===0&&<div className="text-center text-gray-400 py-16 text-sm">Noch keine Nachrichten.</div>}
+        {msgs.map(m=>{
+          const isMe=m.senderId===profile.id;
+          return (
+            <div key={m.id} className={`flex ${isMe?'justify-end':'justify-start'} mb-2`}>
+              <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${isMe?'bg-purple-600 text-white rounded-br-sm':'bg-gray-100 text-gray-900 rounded-bl-sm'}`}>
+                <div>{m.text}</div>
+                <div className={`text-[10px] mt-0.5 ${isMe?'text-purple-200':'text-gray-400'}`}>{fmtTime(m.createdAt)}</div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef}/>
+      </div>
+      <form onSubmit={send} className="flex gap-2 p-3 border-t border-gray-200 bg-white flex-shrink-0">
+        <input value={text} onChange={e=>setText(e.target.value)} placeholder="Nachricht schreiben…"
+          className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50"/>
+        <button type="submit" disabled={!text.trim()}
+          className="w-9 h-9 bg-purple-600 hover:bg-purple-700 rounded-full flex items-center justify-center text-white disabled:opacity-40 transition-colors flex-shrink-0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  NACHRICHTEN — TRAINER SCHREIBT AN VORSTAND
+// ═══════════════════════════════════════════════════════════════════
+function TrainerNachrichtAnVorstand({profile}) {
+  const [vorstand, setVorstand] = useState([]);
+  const [sel,      setSel]      = useState(null);
+  const [msgs,     setMsgs]     = useState([]);
+  const [text,     setText]     = useState('');
+  const [unread,   setUnread]   = useState(0);
+  const bottomRef = useRef(null);
+
+  useEffect(()=>{
+    col('users').where('role','==','vorstand').get().then(s=>setVorstand(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[]);
+
+  useEffect(()=>{
+    if(!sel) return;
+    const threadId=[profile.id,sel.id].sort().join('_');
+    return col('nachrichten').where('threadId','==',threadId)
+      .onSnapshot(s=>{
+        setMsgs(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.createdAt?.seconds-b.createdAt?.seconds));
+        setTimeout(()=>bottomRef.current?.scrollIntoView({behavior:'smooth'}),50);
+      });
+  },[sel]);
+
+  const openThread = async (v) => {
+    setSel(v);
+    const threadId=[profile.id,v.id].sort().join('_');
+    const snap=await col('nachrichten').where('threadId','==',threadId).where('receiverId','==',profile.id).where('read','==',false).get();
+    snap.forEach(d=>d.ref.update({read:true}));
+  };
+
+  const send = async (e) => {
+    e.preventDefault(); if(!text.trim()||!sel) return;
+    const threadId=[profile.id,sel.id].sort().join('_');
+    await col('nachrichten').add({
+      threadId, text:text.trim(),
+      senderId:profile.id, senderName:profile.name, senderRole:'trainer',
+      receiverId:sel.id, read:false, createdAt:ts()
+    });
+    setText('');
+  };
+
+  if(!sel) return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-4">✉️ Nachricht an Vorstand</h1>
+      {vorstand.length===0 ? <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">✉️</div><p className="text-sm">Kein Vorstand gefunden.</p></div> : (
+        <div className="space-y-2">
+          {vorstand.map(v=>(
+            <button key={v.id} onClick={()=>openThread(v)}
+              className="w-full flex items-center gap-3 bg-white border border-gray-200 hover:border-red-300 rounded-xl p-3.5 text-left transition-all">
+              <Avatar name={v.name} color={v.color||'#7c3aed'} size="sm"/>
+              <div><div className="text-sm font-semibold">{v.name}</div><div className="text-xs text-gray-400">Vorstand</div></div>
+              <span className="ml-auto text-gray-300">›</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col" style={{height:'calc(100vh - 56px)'}}>
+      <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-shrink-0 bg-white">
+        <button onClick={()=>setSel(null)} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
+        <Avatar name={sel.name} color={sel.color||'#7c3aed'} size="sm"/>
+        <div><div className="text-sm font-semibold">{sel.name}</div><div className="text-xs text-gray-400">Vorstand</div></div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {msgs.length===0&&<div className="text-center text-gray-400 py-16 text-sm">Noch keine Nachrichten. Schreib dem Vorstand!</div>}
+        {msgs.map(m=>{
+          const isMe=m.senderId===profile.id;
+          return (
+            <div key={m.id} className={`flex ${isMe?'justify-end':'justify-start'} mb-2`}>
+              <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${isMe?'bg-red-600 text-white rounded-br-sm':'bg-gray-100 text-gray-900 rounded-bl-sm'}`}>
+                <div>{m.text}</div>
+                <div className={`text-[10px] mt-0.5 ${isMe?'text-red-200':'text-gray-400'}`}>{fmtTime(m.createdAt)}</div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef}/>
+      </div>
+      <form onSubmit={send} className="flex gap-2 p-3 border-t border-gray-200 bg-white flex-shrink-0">
+        <input value={text} onChange={e=>setText(e.target.value)} placeholder="Nachricht an Vorstand…"
+          className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-gray-50"/>
+        <button type="submit" disabled={!text.trim()}
+          className="w-9 h-9 bg-red-600 hover:bg-red-700 rounded-full flex items-center justify-center text-white disabled:opacity-40 transition-colors flex-shrink-0">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ADMIN — TEAMVERWALTUNG (Spieler/Trainer zwischen Teams verschieben)
+// ═══════════════════════════════════════════════════════════════════
+function AdminTeamverwaltung({show}) {
+  const [teams,      setTeams]      = useState([]);
+  const [members,    setMembers]    = useState([]); // alle user-docs
+  const [moving,     setMoving]     = useState(null);
+  const [targetTeam, setTargetTeam] = useState('');
+  const [saving,     setSaving]     = useState(false);
+  const [openTeams,  setOpenTeams]  = useState({}); // teamId → bool
+
+  const toggleTeam = (id) => setOpenTeams(p=>({...p,[id]:!p[id]}));
+
+  useEffect(()=>{
+    getDocs_(col('teams').orderBy('name')).then(setTeams);
+    return col('users').onSnapshot(s=>setMembers(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[]);
+
+  const startMove = (user, field) => {
+    setMoving({uid:user.id, name:user.name, field, currentTeam: field==='teamId'?user.teamId:user.trainerTeamId});
+    setTargetTeam('');
+  };
+
+  const doMove = async () => {
+    if (!targetTeam || !moving) return;
+    setSaving(true);
+    try {
+      await col('users').doc(moving.uid).update({ [moving.field]: targetTeam });
+      show(`${moving.name} wurde verschoben ✅`);
+      setMoving(null);
+    } catch(e) { show(e.message,'error'); }
+    setSaving(false);
+  };
+
+  const ROLE_LABEL = {player:'Spieler',trainer:'Trainer',dual:'Trainer+Spieler',vorstand:'Vorstand'};
+
+  return (
+    <div className="p-4">
+      <div className="mb-4">
+        <h1 className="text-lg font-semibold">Teamverwaltung</h1>
+        <p className="text-xs text-gray-400">Spieler und Trainer zwischen Teams verschieben</p>
+      </div>
+
+      {/* Modal zum Verschieben */}
+      {moving && (
+        <Modal title={`${moving.name} verschieben`} onClose={()=>setMoving(null)}>
+          <p className="text-sm text-gray-600 mb-3">
+            {moving.field==='trainerTeamId'?'Trainer-Team':'Spieler-Team'} auswählen:
+          </p>
+          <div className="space-y-2 mb-4">
+            {teams.filter(t=>t.id!==moving.currentTeam).map(t=>(
+              <button key={t.id} onClick={()=>setTargetTeam(t.id)}
+                className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all text-sm font-medium
+                  ${targetTeam===t.id?'border-red-500 bg-red-50 text-red-700':'border-gray-200 hover:border-red-300'}`}>
+                🏟️ {t.name} {t.category&&<span className="text-xs font-normal text-gray-400">({t.category})</span>}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setMoving(null)}>Abbrechen</Btn>
+            <Btn className="flex-1" onClick={doMove} disabled={!targetTeam||saving}>{saving?'…':'Verschieben'}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Teams — ausklappbar */}
+      <div className="space-y-2">
+        {teams.map(team => {
+          const players  = members.filter(m=>m.teamId===team.id && (m.role==='player'||m.role==='dual'));
+          const trainers = members.filter(m=>(m.teamId===team.id&&m.role==='trainer') || m.trainerTeamId===team.id);
+          const total    = players.length + trainers.length;
+          const isOpen   = !!openTeams[team.id];
+          return (
+            <div key={team.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              {/* Header — klickbar */}
+              <button onClick={()=>toggleTeam(team.id)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                    {(team.name||'?')[0]}
+                  </div>
+                  <div className="text-left">
+                    <div className="font-semibold text-sm">{team.name}</div>
+                    <div className="text-[11px] text-gray-400">
+                      {total===0 ? 'Keine Mitglieder' : `${players.length} Spieler · ${trainers.length} Trainer`}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {team.category && <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{team.category}</span>}
+                  <span className="text-gray-400 text-sm transition-transform" style={{transform:isOpen?'rotate(180deg)':'rotate(0deg)'}}>▾</span>
+                </div>
+              </button>
+
+              {/* Ausgeklappter Inhalt */}
+              {isOpen && total > 0 && (
+                <div className="border-t border-gray-100">
+                  {trainers.length>0&&(
+                    <div className="px-4 pt-3 pb-1">
+                      <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Trainer</div>
+                      {trainers.map(m=>{
+                        const field = m.trainerTeamId===team.id?'trainerTeamId':'teamId';
+                        return (
+                          <div key={m.id+field} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:m.color||'#CC0000'}}>{initials(m.name)}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium truncate">{m.name}</div>
+                              <div className="text-[10px] text-gray-400">{ROLE_LABEL[m.role]||m.role}</div>
+                            </div>
+                            <button onClick={()=>startMove(m,field)} className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded-lg flex-shrink-0">
+                              Team ändern
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {players.length>0&&(
+                    <div className="px-4 pt-3 pb-3">
+                      <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Spieler</div>
+                      {players.map(m=>{
+                        const age = fmtAge(m.dob);
+                        return (
+                          <div key={m.id} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:m.color||'#CC0000'}}>
+                              {m.number||initials(m.name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline gap-2">
+                                <div className="text-sm font-medium truncate">{m.name}</div>
+                                {m.dob && <span className="text-[10px] text-gray-400 flex-shrink-0">{fmtDob(m.dob)} ({age} J.)</span>}
+                              </div>
+                              <div className="text-[10px] text-gray-400">
+                                {m.position||''}
+                                {!m.claimed&&<span className="text-amber-500"> · ausstehend</span>}
+                              </div>
+                            </div>
+                            <button onClick={()=>startMove(m,'teamId')} className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded-lg flex-shrink-0">
+                              Team ändern
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+              {isOpen && total === 0 && (
+                <div className="border-t border-gray-100 px-4 py-3 text-xs text-gray-400">Noch keine Mitglieder in diesem Team.</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TRAINER — BUSPLANUNG
+// ═══════════════════════════════════════════════════════════════════
+function TrainerBusplanung({profile, show}) {
+  const BUSES = [
+    {id:'rot',    label:'Bus Rot',    emoji:'🚌', color:'#DC2626', bg:'#FEF2F2', border:'#FECACA'},
+    {id:'silber', label:'Bus Silber', emoji:'🚎', color:'#4B5563', bg:'#F9FAFB', border:'#E5E7EB'},
+  ];
+  const [bookings,  setBookings]  = useState([]);
+  const [month,     setMonth]     = useState(new Date().toISOString().slice(0,7));
+  const [selBus,    setSelBus]    = useState('rot');
+  const [selDate,   setSelDate]   = useState('');
+  const [selFrom,   setSelFrom]   = useState('08:00');
+  const [selTo,     setSelTo]     = useState('14:00');
+  const [opponent,  setOpponent]  = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [delId,     setDelId]     = useState(null);
+
+  useEffect(()=>{
+    const [y,m] = month.split('-');
+    const start = `${y}-${m}-01`;
+    const end   = `${y}-${String(Number(m)%12+1).padStart(2,'0')}-01`;
+    return col('bus_bookings')
+      .where('date','>=',start).where('date','<',end)
+      .onSnapshot(s=>setBookings(s.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>a.date.localeCompare(b.date)||( a.timeFrom||'').localeCompare(b.timeFrom||''))));
+  },[month]);
+
+  // Check time overlap for same bus on same day
+  const hasTimeConflict = (busId, date, from, to) => {
+    const same = bookings.filter(b=>b.busId===busId && b.date===date);
+    if(!same.length) return null;
+    // Parse HH:MM to minutes
+    const toMin = t => { const [h,m]=(t||'00:00').split(':'); return Number(h)*60+Number(m); };
+    const newFrom=toMin(from), newTo=toMin(to);
+    return same.find(b=>{
+      const bFrom=toMin(b.timeFrom), bTo=toMin(b.timeTo);
+      return newFrom < bTo && newTo > bFrom; // overlap
+    });
+  };
+
+  const durationLabel = (from, to) => {
+    if(!from||!to) return '';
+    const [fh,fm]=from.split(':').map(Number);
+    const [th,tm]=to.split(':').map(Number);
+    const mins = (th*60+tm)-(fh*60+fm);
+    if(mins<=0) return '';
+    const h=Math.floor(mins/60), m=mins%60;
+    return h>0 ? `${h}h${m>0?` ${m}min`:''}` : `${m}min`;
+  };
+
+  const save = async () => {
+    if(!selDate||!opponent.trim()||!selFrom||!selTo) return;
+    if(selFrom>=selTo){ show('Endzeit muss nach Startzeit liegen','error'); return; }
+    const conflict = hasTimeConflict(selBus, selDate, selFrom, selTo);
+    if(conflict){
+      show(`Zeitkonflikt mit ${conflict.trainerName} (${conflict.timeFrom}–${conflict.timeTo})!`,'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await col('bus_bookings').add({
+        busId: selBus, date: selDate, opponent: opponent.trim(),
+        timeFrom: selFrom, timeTo: selTo,
+        teamId: profile.teamId, trainerName: profile.name, createdAt: ts()
+      });
+      show('Bus gebucht ✅'); setOpponent(''); setSelDate('');
+    } catch(err) { show(err.message,'error'); }
+    setSaving(false);
+  };
+
+  const doDelete = async () => {
+    await col('bus_bookings').doc(delId).delete();
+    show('Buchung storniert'); setDelId(null);
+  };
+
+  const prevMonth = () => { const d=new Date(month+'-01'); d.setMonth(d.getMonth()-1); setMonth(d.toISOString().slice(0,7)); };
+  const nextMonth = () => { const d=new Date(month+'-01'); d.setMonth(d.getMonth()+1); setMonth(d.toISOString().slice(0,7)); };
+  const monthLabel = new Date(month+'-01').toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+
+  // Group bookings by date for the timeline view
+  const byDate = bookings.reduce((acc,b)=>{ (acc[b.date]=acc[b.date]||[]).push(b); return acc; },{});
+
+  // Visual time bar: 06:00–22:00 = 960min span
+  const DAY_START=6*60, DAY_END=22*60, SPAN=DAY_END-DAY_START;
+  const toMin = t => { const [h,m]=(t||'00:00').split(':'); return Number(h)*60+Number(m); };
+  const barLeft  = t => `${Math.max(0,Math.min(100,(toMin(t)-DAY_START)/SPAN*100))}%`;
+  const barWidth = (f,t) => `${Math.max(2,(toMin(t)-toMin(f))/SPAN*100)}%`;
+
+  const conflictCheck = selDate && selFrom && selTo && selFrom < selTo
+    ? hasTimeConflict(selBus, selDate, selFrom, selTo) : null;
+
+  return (
+    <div className="p-4">
+      {delId && (
+        <Modal title="Buchung stornieren?" onClose={()=>setDelId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diese Bus-Buchung wirklich stornieren?</p>
+          <div className="flex gap-2">
+            <button className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>setDelId(null)}>Abbrechen</button>
+            <button className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm" onClick={doDelete}>Stornieren</button>
+          </div>
+        </Modal>
+      )}
+
+      <h1 className="text-lg font-semibold mb-1">Busplanung</h1>
+      <p className="text-xs text-gray-400 mb-4">Reserviere einen Bus mit Zeitfenster für dein Auswärtsspiel</p>
+
+      {/* Bus-Status Cards */}
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        {BUSES.map(bus=>{
+          const upcoming = bookings.filter(b=>b.busId===bus.id && b.date>=todayStr());
+          const next = upcoming[0];
+          return (
+            <div key={bus.id} className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <div className="text-2xl mb-1">{bus.emoji}</div>
+              <div className="text-xs font-semibold mb-1.5" style={{color:bus.color}}>{bus.label}</div>
+              {next ? (
+                <div className="rounded-lg p-1.5" style={{background:bus.bg,border:`1px solid ${bus.border}`}}>
+                  <div className="text-[10px] font-medium mb-0.5" style={{color:bus.color}}>Nächste Buchung</div>
+                  <div className="text-[11px] font-semibold text-gray-800">{fmtDate(next.date)}</div>
+                  {next.timeFrom && <div className="text-[11px] text-gray-600">{next.timeFrom} – {next.timeTo} Uhr</div>}
+                  <div className="text-[10px] text-gray-500 truncate">{next.opponent}</div>
+                </div>
+              ) : (
+                <div className="text-[10px] text-green-600 font-medium">✓ Verfügbar</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Neue Buchung */}
+      <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
+        <div className="text-sm font-semibold mb-3">🚌 Bus reservieren</div>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {BUSES.map(bus=>(
+            <button key={bus.id} onClick={()=>setSelBus(bus.id)}
+              className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${selBus===bus.id?'border-red-500 bg-red-50 text-red-700':'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+              {bus.emoji} {bus.label}
+            </button>
+          ))}
+        </div>
+        <Inp label="Datum (Auswärtsspiel)" type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} min={todayStr()}/>
+        <div className="flex gap-2 mb-3">
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Von</label>
+            <input type="time" value={selFrom} onChange={e=>setSelFrom(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Bis</label>
+            <input type="time" value={selTo} onChange={e=>setSelTo(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+          </div>
+          {selFrom && selTo && selFrom < selTo && (
+            <div className="flex items-end pb-2">
+              <span className="text-xs font-semibold text-gray-500 whitespace-nowrap">{durationLabel(selFrom,selTo)}</span>
+            </div>
+          )}
+        </div>
+        <Inp label="Gegner" value={opponent} onChange={e=>setOpponent(e.target.value)} placeholder="z.B. FC Neustadt"/>
+        {conflictCheck && (
+          <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-3 py-2">
+            ⚠️ Zeitüberschneidung mit <strong>{conflictCheck.trainerName}</strong> ({conflictCheck.timeFrom}–{conflictCheck.timeTo} Uhr, {conflictCheck.opponent})
+          </div>
+        )}
+        <button onClick={save} disabled={saving||!selDate||!opponent.trim()||!selFrom||!selTo||selFrom>=selTo}
+          className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-40 transition-colors">
+          {saving ? '⏳ Buchen…' : 'Bus reservieren'}
+        </button>
+      </div>
+
+      {/* Kalender-Liste mit Timeline */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <button onClick={prevMonth} className="p-1 rounded hover:bg-gray-100 text-gray-500">◀</button>
+          <span className="text-sm font-semibold">{monthLabel}</span>
+          <button onClick={nextMonth} className="p-1 rounded hover:bg-gray-100 text-gray-500">▶</button>
+        </div>
+        {Object.keys(byDate).length===0 ? (
+          <div className="text-center text-gray-400 py-8 text-sm">Keine Buchungen in diesem Monat.</div>
+        ) : (
+          <div className="divide-y">
+            {Object.entries(byDate).map(([date, dayBookings])=>(
+              <div key={date} className="px-4 py-3">
+                {/* Date header */}
+                <div className="text-xs font-semibold text-gray-500 mb-2">{fmtDate(date)}</div>
+                {/* Timeline bar */}
+                <div className="relative h-7 bg-gray-100 rounded-lg mb-2 overflow-hidden">
+                  {/* Hour markers */}
+                  {[8,10,12,14,16,18,20].map(h=>(
+                    <div key={h} className="absolute top-0 bottom-0 border-l border-gray-200 flex items-end pb-0.5"
+                      style={{left:`${(h*60-DAY_START)/SPAN*100}%`}}>
+                      <span className="text-[9px] text-gray-300 pl-0.5">{h}</span>
+                    </div>
+                  ))}
+                  {/* Booking blocks */}
+                  {dayBookings.map(b=>{
+                    const bus = BUSES.find(x=>x.id===b.busId)||BUSES[0];
+                    const from = b.timeFrom||'08:00', to = b.timeTo||'14:00';
+                    return (
+                      <div key={b.id} title={`${bus.label}: ${from}–${to} · ${b.opponent}`}
+                        className="absolute top-1 bottom-1 rounded flex items-center justify-center overflow-hidden"
+                        style={{left:barLeft(from),width:barWidth(from,to),background:bus.color,opacity:0.85}}>
+                        <span className="text-[10px] text-white font-semibold px-1 truncate">{bus.emoji} {from}–{to}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Booking entries */}
+                {dayBookings.map(b=>{
+                  const bus = BUSES.find(x=>x.id===b.busId)||BUSES[0];
+                  const isOwn = b.trainerName===profile.name;
+                  const dur = b.timeFrom&&b.timeTo ? durationLabel(b.timeFrom,b.timeTo) : '';
+                  return (
+                    <div key={b.id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                      <span className="text-base flex-shrink-0">{bus.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold" style={{color:bus.color}}>{bus.label}</span>
+                          {b.timeFrom && (
+                            <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">
+                              {b.timeFrom} – {b.timeTo} Uhr{dur?` (${dur})`:''}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600 truncate">{b.opponent} · {b.trainerName}</div>
+                      </div>
+                      {isOwn && (
+                        <button onClick={()=>setDelId(b.id)} className="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-red-50 text-xs flex-shrink-0">🗑</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ADMIN — SPIELERVERWALTUNG (Vorstand verwaltet Spieler & Profile)
+// ═══════════════════════════════════════════════════════════════════
+function AdminSpielerVerwaltung({profile: adminProfile, show}) {
+  const [teams,      setTeams]      = useState([]);
+  const [players,    setPlayers]    = useState([]);
+  const [selTeam,    setSelTeam]    = useState('');
+  const [detail,     setDetail]     = useState(null); // player being viewed
+  const [addOpen,    setAddOpen]    = useState(false);
+  const [delId,      setDelId]      = useState(null);
+  const [saving,     setSaving]     = useState(false);
+  const POSITIONS = ['Torwart','Abwehr','Mittelfeld','Sturm'];
+  const EMPTY_FORM = {name:'',position:'Mittelfeld',number:'',dob:''};
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  useEffect(()=>{
+    return col('teams').onSnapshot(s=>{
+      const ts2 = s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.name.localeCompare(b.name));
+      setTeams(ts2);
+      if(!selTeam && ts2.length>0) setSelTeam(ts2[0].id);
+    });
+  },[]);
+
+  useEffect(()=>{
+    if(!selTeam) return;
+    return col('users').where('teamId','==',selTeam).where('role','==','player')
+      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+  },[selTeam]);
+
+  const addPlayer = async (e) => {
+    e.preventDefault(); setSaving(true);
+    try {
+      await col('users').add({
+        name: form.name.trim(), role:'player',
+        teamId: selTeam, position: form.position,
+        number: form.number, dob: form.dob,
+        color: randColor(), claimed: false, uid:'', email:'', createdAt: ts()
+      });
+      show('Spieler hinzugefügt ✅'); setForm(EMPTY_FORM); setAddOpen(false);
+    } catch(err) { show(err.message,'error'); }
+    setSaving(false);
+  };
+
+  const doDelete = async () => {
+    await col('users').doc(delId).delete();
+    show('Spieler entfernt'); setDelId(null);
+  };
+
+  return (
+    <div className="p-4">
+      {delId && (
+        <Modal title="Spieler entfernen?" onClose={()=>setDelId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Spieler dauerhaft aus diesem Team entfernen?</p>
+          <div className="flex gap-2">
+            <button className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>setDelId(null)}>Abbrechen</button>
+            <button className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm" onClick={doDelete}>Entfernen</button>
+          </div>
+        </Modal>
+      )}
+
+      {addOpen && (
+        <Modal title="Spieler hinzufügen" onClose={()=>{setAddOpen(false);setForm(EMPTY_FORM);}}>
+          <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-3">
+            ℹ️ Der Spieler erhält einen Slot und kann sich dann selbst registrieren und verknüpfen.
+          </p>
+          <form onSubmit={addPlayer}>
+            <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Max Mustermann" required/>
+            <Inp label="Geburtsdatum" type="date" value={form.dob} onChange={e=>setForm({...form,dob:e.target.value})}/>
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <Sel label="Position" value={form.position} onChange={e=>setForm({...form,position:e.target.value})}>
+                  {POSITIONS.map(p=><option key={p}>{p}</option>)}
+                </Sel>
+              </div>
+              <div className="w-20">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Nr.</label>
+                <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-1">
+              <button type="button" className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>{setAddOpen(false);setForm(EMPTY_FORM);}}>Abbrechen</button>
+              <button type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold disabled:opacity-40">{saving?'…':'Hinzufügen'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {detail && (
+        <AdminPlayerDetail player={detail} onClose={()=>setDetail(null)} show={show}/>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-lg font-semibold">Spielerverwaltung</h1>
+          <p className="text-xs text-gray-400">{players.length} Spieler</p>
+        </div>
+        <button onClick={()=>setAddOpen(true)} className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold">+ Spieler</button>
+      </div>
+
+      {/* Team-Tabs */}
+      {teams.length>0 && (
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+          {teams.map(t=>(
+            <button key={t.id} onClick={()=>setSelTeam(t.id)}
+              className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${selTeam===t.id?'bg-red-600 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+              {t.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {players.length===0 ? (
+        <div className="text-center text-gray-400 py-12">
+          <div className="text-4xl mb-2">👥</div>
+          <p className="text-sm">Noch keine Spieler in diesem Team.</p>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {players.map(p=>(
+            <div key={p.id} onClick={()=>setDetail(p)}
+              className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:border-red-200 hover:bg-red-50/30 transition-colors">
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+                {p.number||initials(p.name)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate">{p.name}</div>
+                <div className="text-xs text-gray-400 truncate">
+                  {p.dob && <span>{fmtDob(p.dob)} · {fmtAge(p.dob)} J. · </span>}
+                  {p.position}
+                  {p.vereinsarbeit && <span className="text-green-600 ml-1">· ✓ Vereinsarbeit</span>}
+                  {p.empfehlung?.team && <span className="text-blue-600 ml-1">· 📋 {p.empfehlung.team}</span>}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {!p.claimed && <span className="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full">Ausstehend</span>}
+                <button onClick={e=>{e.stopPropagation();setDelId(p.id);}} className="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-red-50 text-xs">🗑</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminPlayerDetail({player, onClose, show}) {
+  const [notizen,      setNotizen]      = useState(player.vorstandNotizen||'');
+  const [vereinsarbeit,setVereinsarbeit]= useState(player.vereinsarbeit||false);
+  const [saving,       setSaving]       = useState(false);
+  const [uploadLabel,  setUploadLabel]  = useState('');
+  const [uploading,    setUploading]    = useState(false);
+  const [docs,         setDocs]         = useState([]);
+  const fileRef = useRef(null);
+
+  useEffect(()=>{
+    return col('dokumente')
+      .where('playerId','==',player.id)
+      .onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>{
+        const ta=a.createdAt?.toDate?a.createdAt.toDate():new Date(0);
+        const tb=b.createdAt?.toDate?b.createdAt.toDate():new Date(0);
+        return tb-ta;
+      })));
+  },[player.id]);
+
+  const saveNotes = async () => {
+    setSaving(true);
+    await col('users').doc(player.id).update({vorstandNotizen: notizen, vereinsarbeit});
+    show('Gespeichert ✅'); setSaving(false);
+  };
+
+  const uploadDoc = async (e) => {
+    const file = e.target.files[0]; if(!file) return;
+    setUploading(true);
+    try {
+      const ref = storage.ref(`spieler_docs/${player.id}/${Date.now()}_${file.name}`);
+      await ref.put(file);
+      const url = await ref.getDownloadURL();
+      await col('dokumente').add({
+        playerId: player.id, playerName: player.name,
+        name: file.name, url, size: file.size, createdAt: ts()
+      });
+      show('Dokument hochgeladen ✅');
+    } catch(err) { show(err.message,'error'); }
+    setUploading(false);
+  };
+
+  const deleteDoc = async (doc) => {
+    try {
+      const ref = storage.refFromURL(doc.url);
+      await ref.delete();
+    } catch{}
+    await col('dokumente').doc(doc.id).delete();
+    show('Dokument gelöscht');
+  };
+
+  const empfehlung = player.empfehlung;
+
+  return (
+    <Modal title={`Spielerprofil: ${player.name}`} onClose={onClose} wide={true}>
+      <div className="space-y-5">
+        {/* Steckbrief */}
+        <div className="flex items-center gap-4 bg-gray-50 rounded-xl p-4">
+          <div className="w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold flex-shrink-0" style={{background:player.color||'#CC0000'}}>
+            {player.number||initials(player.name)}
+          </div>
+          <div>
+            <div className="font-semibold text-base">{player.name}</div>
+            <div className="text-xs text-gray-500">
+              {player.position} · #{player.number||'—'}
+              {player.dob && ` · ${fmtDob(player.dob)} (${fmtAge(player.dob)} J.)`}
+            </div>
+            <div className="text-xs mt-0.5">
+              {player.claimed
+                ? <span className="text-green-600">✓ Konto verknüpft · {player.email}</span>
+                : <span className="text-amber-600">⏳ Noch nicht registriert</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Trainer-Empfehlung (read-only) */}
+        {empfehlung?.team ? (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="text-xs font-semibold text-blue-700 mb-2">📋 Trainer-Empfehlung (nächste Saison)</div>
+            <div className="text-sm font-bold text-blue-800">{empfehlung.team}</div>
+            {empfehlung.notiz && <div className="text-xs text-blue-600 mt-1">{empfehlung.notiz}</div>}
+          </div>
+        ) : (
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs text-gray-400 text-center">
+            Noch keine Trainer-Empfehlung für diese Saison
+          </div>
+        )}
+
+        {/* Vereinsarbeit */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" checked={vereinsarbeit} onChange={e=>setVereinsarbeit(e.target.checked)}
+              className="w-5 h-5 rounded accent-red-600"/>
+            <div>
+              <div className="text-sm font-semibold">Vereinsarbeit geleistet</div>
+              <div className="text-xs text-gray-400">3 Stunden Vereinsarbeit ✓</div>
+            </div>
+          </label>
+        </div>
+
+        {/* Vorstand-Notizen */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Notizen (nur für Vorstand sichtbar)</label>
+          <textarea value={notizen} onChange={e=>setNotizen(e.target.value)} rows={4}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+            placeholder="Interne Notizen zum Spieler…"/>
+        </div>
+
+        <button onClick={saveNotes} disabled={saving}
+          className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-40 transition-colors">
+          {saving?'⏳ Speichern…':'Notizen & Vereinsarbeit speichern'}
+        </button>
+
+        {/* Dokumente */}
+        <div className="border-t pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-semibold">Dokumente</div>
+            <button onClick={()=>fileRef.current?.click()}
+              className="px-3 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-medium text-gray-600 transition-colors">
+              {uploading?'⏳ Hochladen…':'+ Dokument'}
+            </button>
+            <input ref={fileRef} type="file" className="hidden" onChange={uploadDoc}/>
+          </div>
+          {docs.length===0 ? (
+            <div className="text-center text-gray-400 text-xs py-4">Noch keine Dokumente hochgeladen.</div>
+          ) : (
+            <div className="space-y-2">
+              {docs.map(doc=>(
+                <div key={doc.id} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+                  <span className="text-base">📄</span>
+                  <div className="flex-1 min-w-0">
+                    <a href={doc.url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline truncate block">{doc.name}</a>
+                    <div className="text-[10px] text-gray-400">{doc.size?(doc.size/1024).toFixed(1)+' KB':''}</div>
+                  </div>
+                  <button onClick={()=>deleteDoc(doc)} className="text-gray-400 hover:text-red-600 p-1 text-xs">🗑</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  ADMIN APP
 // ═══════════════════════════════════════════════════════════════════
 function AdminApp({profile}) {
   const [page, setPage] = useState('overview');
   const {show, Container} = useToast();
 
-  const nav = [{section:'', items:[
-    {id:'overview', icon:'📊',  label:'Übersicht'},
-    {id:'teams',    icon:'🏟️', label:'Teams'},
-    {id:'trainer',  icon:'👨‍💼',label:'Trainer'},
-    {id:'pinnwand', icon:'📌',  label:'Pinnwand'},
-  ]}];
+  const nav = [
+    {section:'Verein', items:[
+      {id:'overview',          icon:'📊',  label:'Übersicht'},
+      {id:'teams',             icon:'🏟️', label:'Teams'},
+      {id:'trainer',           icon:'👨‍💼',label:'Trainer'},
+      {id:'teamverwaltung',    icon:'🔀',  label:'Teamverwaltung'},
+      {id:'spielerverwaltung', icon:'🧑‍💼', label:'Spielerverwaltung'},
+      {id:'genehmigungen',     icon:'✅',  label:'Genehmigungen'},
+    ]},
+    {section:'Kommunikation', items:[
+      {id:'pinnwand',      icon:'📌',  label:'Pinnwand'},
+      {id:'dokumente',     icon:'📁',  label:'Dokumente'},
+      {id:'nachrichten',   icon:'💬',  label:'Nachrichten'},
+    ]},
+  ];
 
   const content = {
-    overview: <AdminOverview/>,
-    teams:    <AdminTeams show={show}/>,
-    trainer:  <AdminTrainer show={show}/>,
-    pinnwand: <AdminPinnwand profile={profile} show={show}/>,
+    overview:           <AdminOverview/>,
+    teams:              <AdminTeams show={show}/>,
+    trainer:            <AdminTrainer show={show}/>,
+    teamverwaltung:     <AdminTeamverwaltung show={show}/>,
+    spielerverwaltung:  <AdminSpielerVerwaltung profile={profile} show={show}/>,
+    genehmigungen:      <AdminGenehmigungen show={show}/>,
+    pinnwand:           <AdminPinnwand profile={profile} show={show}/>,
+    dokumente:          <AdminDokumente profile={profile} show={show}/>,
+    nachrichten:        <VorstandNachrichten profile={profile}/>,
   };
 
   return (
@@ -1553,18 +3770,477 @@ function AdminApp({profile}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  VORSTAND & TRAINER APP (Umschalter zwischen beiden Welten)
+// ═══════════════════════════════════════════════════════════════════
+function VorstandTrainerApp({profile}) {
+  const [mode, setMode] = useState('vorstand'); // 'vorstand' | 'trainer'
+  // Für den Trainer-Modus das trainerTeamId als teamId verwenden
+  const trainerProfile = {...profile, teamId: profile.trainerTeamId};
+
+  const ModeToggle = () => (
+    <div className="mx-2 mb-1 flex rounded-lg overflow-hidden border border-white/10">
+      <button onClick={()=>setMode('vorstand')}
+        className={`flex-1 py-1.5 text-xs font-semibold transition-all ${mode==='vorstand'?'bg-red-600 text-white':'text-white/40 hover:text-white/70'}`}>
+        🏟️ Vorstand
+      </button>
+      <button onClick={()=>setMode('trainer')}
+        className={`flex-1 py-1.5 text-xs font-semibold transition-all ${mode==='trainer'?'bg-red-600 text-white':'text-white/40 hover:text-white/70'}`}>
+        📋 Trainer
+      </button>
+    </div>
+  );
+
+  if (mode === 'trainer') {
+    // TrainerApp-Inhalt mit Modustoggle in der Sidebar
+    // Wir nutzen TrainerApp direkt, der Toggle wird als floating button angezeigt
+    return (
+      <>
+        <TrainerApp profile={trainerProfile}/>
+        <div className="fixed bottom-4 right-4 z-50">
+          <div className="flex bg-gray-900 rounded-full shadow-2xl overflow-hidden border border-white/10">
+            <button onClick={()=>setMode('vorstand')} className="px-3 py-2 text-[11px] font-semibold text-white/50 hover:text-white transition-colors">🏟️ Vorstand</button>
+            <button className="px-3 py-2 text-[11px] font-semibold bg-red-600 text-white">📋 Trainer</button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <AdminApp profile={profile}/>
+      <div className="fixed bottom-4 right-4 z-50">
+        <div className="flex bg-gray-900 rounded-full shadow-2xl overflow-hidden border border-white/10">
+          <button className="px-3 py-2 text-[11px] font-semibold bg-red-600 text-white">🏟️ Vorstand</button>
+          <button onClick={()=>setMode('trainer')} className="px-3 py-2 text-[11px] font-semibold text-white/50 hover:text-white transition-colors">📋 Trainer</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DUAL APP (Trainer & Spieler — Umschalter in der Sidebar)
+// ═══════════════════════════════════════════════════════════════════
+function DualApp({profile}) {
+  const [mode, setMode] = useState('trainer'); // 'trainer' | 'player'
+  const {show, Container} = useToast();
+
+  // Für den Trainer-Modus das trainerTeamId verwenden, für Spieler das teamId
+  const trainerProfile = {...profile, teamId: profile.trainerTeamId};
+  const playerProfile  = {...profile, teamId: profile.teamId};
+
+  const trainerNav = [
+    {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
+    {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
+    {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+  ];
+  const playerNav = [{section:'', items:[
+    {id:'training',icon:'📅',label:'Training'},
+    {id:'wellness',icon:'💪',label:'Wellness'},
+    {id:'stats',   icon:'📊',label:'Stats'},
+    {id:'chat',    icon:'💬',label:'Chat'},
+    {id:'news',    icon:'📢',label:'News'},
+  ]}];
+
+  const [page, setPage] = useState(mode==='trainer' ? 'kader' : 'training');
+
+  // Seite zurücksetzen beim Moduswechsel
+  const switchMode = (m) => {
+    setMode(m);
+    setPage(m==='trainer' ? 'kader' : 'training');
+  };
+
+  const nav = mode==='trainer' ? trainerNav : playerNav;
+  const activeProfile = mode==='trainer' ? trainerProfile : playerProfile;
+
+  const trainerContent = {
+    kader: <TrainerKader profile={trainerProfile} show={show}/>,
+    spiele: <TrainerSpiele profile={trainerProfile} show={show}/>,
+    training: <TrainerTraining profile={trainerProfile} show={show}/>,
+    taktikboard: <Taktikboard profile={trainerProfile} show={show}/>,
+    verletzungen: <TrainerVerletzungen profile={trainerProfile} show={show}/>,
+    beurteilungen: <TrainerBeurteilungen profile={trainerProfile} show={show}/>,
+    chat: <ChatPage profile={trainerProfile}/>,
+  };
+  const playerContent = {
+    training: <PlayerTraining profile={playerProfile}/>,
+    wellness: <PlayerWellness profile={playerProfile}/>,
+    stats: <PlayerStats profile={playerProfile}/>,
+    chat: <ChatPage profile={playerProfile}/>,
+    news: <PlayerNews/>,
+  };
+
+  // Umschalter wird oben in der Sidebar eingeblendet
+  const ModeToggle = () => (
+    <div className="mx-2 mb-1 flex rounded-lg overflow-hidden border border-white/10">
+      <button onClick={()=>switchMode('trainer')}
+        className={`flex-1 py-1.5 text-xs font-semibold transition-all ${mode==='trainer'?'bg-red-600 text-white':'text-white/40 hover:text-white/70'}`}>
+        📋 Trainer
+      </button>
+      <button onClick={()=>switchMode('player')}
+        className={`flex-1 py-1.5 text-xs font-semibold transition-all ${mode==='player'?'bg-red-600 text-white':'text-white/40 hover:text-white/70'}`}>
+        ⚽ Spieler
+      </button>
+    </div>
+  );
+
+  return (
+    <>
+      <Layout profile={activeProfile} nav={nav} page={page} setPage={setPage}
+        onLogout={()=>auth.signOut()} accent="red"
+        extraHeader={<ModeToggle/>}>
+        {mode==='trainer' ? (trainerContent[page]||null) : (playerContent[page]||null)}
+        <Container/>
+      </Layout>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PROFIL VERVOLLSTÄNDIGEN (Auth vorhanden, aber kein Firestore-Doc)
+// ═══════════════════════════════════════════════════════════════════
+function CompleteProfile({user, onDone}) {
+  const [name,   setName]   = useState(user.displayName||'');
+  const [dob,    setDob]    = useState('');
+  const [role,   setRole]   = useState('player');
+  const [saving, setSaving] = useState(false);
+  const [msg,    setMsg]    = useState('');
+  const ADMIN_EMAIL = 'finanzmakler.rittner@gmail.com';
+  const ROLES = [
+    {v:'player',           l:'Spieler',            icon:'⚽', desc:'Training, Wellness, Chat'},
+    {v:'trainer',          l:'Trainer',            icon:'📋', desc:'Kader, Training, Taktik'},
+    {v:'dual',             l:'Trainer & Spieler',  icon:'🔄', desc:'Zwei Teams, zwei Rollen'},
+    {v:'vorstand',         l:'Vorstand',           icon:'🏟️',desc:'Genehmigung erforderlich 🔒'},
+    {v:'vorstand_trainer', l:'Vorstand & Trainer', icon:'🎯', desc:'Genehmigung erforderlich 🔒', wide:true},
+  ];
+
+  const needsDob = role === 'player' || role === 'dual';
+
+  const save = async (e) => {
+    e.preventDefault(); setSaving(true); setMsg('');
+    try {
+      const email = user.email||'';
+      const existing = await col('users').limit(2).get();
+      const isFirst  = existing.docs.filter(d=>d.id!==user.uid).length === 0;
+      const isAdmin2 = isFirst || email.toLowerCase()===ADMIN_EMAIL;
+      const finalRole = isAdmin2 ? 'vorstand' : role;
+      const needsApproval2 = !isAdmin2 && (finalRole === 'vorstand' || finalRole === 'vorstand_trainer');
+      await col('users').doc(user.uid).set({
+        name, email, role: finalRole,
+        status: needsApproval2 ? 'pending' : 'active',
+        teamId: '', trainerTeamId: '',
+        dob: dob || '',
+        color: randColor(), createdAt: ts(),
+        claimed: finalRole === 'player' ? false : true,
+      });
+      onDone();
+    } catch(err) { setMsg(err.message); }
+    setSaving(false);
+  };
+
+  const canSubmit = name.trim() && (!needsDob || dob);
+
+  const inputCls2 = "w-full rounded-xl px-4 py-3 text-sm bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-colors";
+  const labelCls2 = "block text-xs font-medium text-gray-400 mb-1.5";
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4"
+      style={{background:'linear-gradient(160deg,#1a0505 0%,#0d0d0d 45%,#0a0a0a 100%)'}}>
+      <div className="text-center mb-6">
+        <div className="text-4xl mb-2">⚽</div>
+        <h1 className="text-xl font-black text-white">Profil einrichten</h1>
+        <p className="text-xs mt-1" style={{color:'rgba(255,255,255,0.35)'}}>{user.email}</p>
+      </div>
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl p-5 space-y-3"
+        style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)'}}>
+        <form onSubmit={save} className="space-y-3">
+          <div>
+            <label className={labelCls2}>Vollständiger Name</label>
+            <input className={inputCls2} value={name} onChange={e=>setName(e.target.value)} placeholder="Max Mustermann" required/>
+          </div>
+          <div>
+            <label className={labelCls2}>Ich bin…</label>
+            <div className="grid grid-cols-2 gap-2">
+              {ROLES.map(r=>(
+                <button key={r.v} type="button" onClick={()=>setRole(r.v)}
+                  className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-center transition-all ${r.wide?'col-span-2':''}`}
+                  style={role===r.v
+                    ? {borderColor:'#CC0000',background:'rgba(204,0,0,0.12)'}
+                    : {borderColor:'rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.03)'}}>
+                  <span className="text-lg">{r.icon}</span>
+                  <span className="text-xs font-semibold text-white">{r.l}</span>
+                  <span className="text-[9px] leading-tight" style={{color:'rgba(255,255,255,0.4)'}}>{r.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {needsDob && (
+            <div>
+              <label className={labelCls2}>Geburtsdatum *</label>
+              <input className={inputCls2} type="date" value={dob} onChange={e=>setDob(e.target.value)} required/>
+            </div>
+          )}
+          {msg && <p className="text-xs rounded-xl px-4 py-2.5" style={{background:'rgba(204,0,0,0.15)',border:'1px solid rgba(204,0,0,0.3)',color:'#ff8080'}}>{msg}</p>}
+          <button type="submit" disabled={saving||!canSubmit}
+            className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40"
+            style={{background:'linear-gradient(135deg,#CC0000,#990000)',boxShadow:'0 4px 20px rgba(204,0,0,0.3)'}}>
+            {saving ? '⏳ Speichern…' : 'Profil speichern'}
+          </button>
+          <button type="button" onClick={()=>auth.signOut()}
+            className="w-full text-xs text-center" style={{color:'rgba(255,255,255,0.25)'}}>Abmelden</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SPIELER VERKNÜPFEN (nach Team-Auswahl: Slot-Suche & Verbindung)
+// ═══════════════════════════════════════════════════════════════════
+function ClaimPlayer({authUser, profile, onClaimed}) {
+  const [slots,      setSlots]      = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [saving,     setSaving]     = useState(false);
+  const [search,     setSearch]     = useState('');
+  const [pendingSlot,setPendingSlot]= useState(null); // slot chosen, waiting for dob
+  const [dob,        setDob]        = useState('');
+
+  useEffect(()=>{
+    return col('users')
+      .where('teamId','==',profile.teamId)
+      .onSnapshot(s=>{
+        const all = s.docs.map(d=>({id:d.id,...d.data()}));
+        const unclaimed = all
+          .filter(u => u.role==='player' && u.claimed===false && u.id!==authUser.uid)
+          .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+        setSlots(unclaimed);
+        setLoading(false);
+      });
+  },[profile.teamId]);
+
+  const claim = async () => {
+    if (!pendingSlot || !dob) return;
+    setSaving(true);
+    try {
+      await col('users').doc(authUser.uid).update({
+        name:      pendingSlot.name,
+        position:  pendingSlot.position,
+        number:    pendingSlot.number,
+        color:     pendingSlot.color || randColor(),
+        dob,
+        claimed:   true,
+        slotId:    pendingSlot.id,
+        claimedAt: ts(),
+      });
+      await col('users').doc(pendingSlot.id).update({
+        claimed: true, uid: authUser.uid, claimedAt: ts(),
+      });
+      onClaimed();
+    } catch(e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const filtered = slots.filter(s=>(s.name||'').toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-6">
+          <div className="text-5xl mb-2">🔗</div>
+          <h1 className="text-2xl font-bold text-white">Deinen Namen suchen</h1>
+          <p className="text-red-200 text-sm mt-1">Der Trainer hat deinen Namen bereits angelegt.<br/>Wähle dich aus der Liste aus.</p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-2xl p-5">
+          {loading ? <Spinner/> : (
+            <>
+              {/* Schritt 2: Geburtsdatum bestätigen */}
+              {pendingSlot ? (
+                <div>
+                  <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4">
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:pendingSlot.color||'#CC0000'}}>
+                      {pendingSlot.number||initials(pendingSlot.name)}
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold">{pendingSlot.name}</div>
+                      <div className="text-xs text-gray-400">{pendingSlot.position}</div>
+                    </div>
+                  </div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Dein Geburtsdatum *</label>
+                  <input type="date" value={dob} onChange={e=>setDob(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                  <div className="flex gap-2">
+                    <button onClick={()=>setPendingSlot(null)} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Zurück</button>
+                    <button onClick={claim} disabled={!dob||saving}
+                      className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50 hover:bg-red-700 transition-colors">
+                      {saving?'…':'Bestätigen'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <input
+                    value={search} onChange={e=>setSearch(e.target.value)}
+                    placeholder="Name suchen…"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                  {filtered.length === 0 ? (
+                    <div className="text-center py-6">
+                      <div className="text-3xl mb-2">🤔</div>
+                      <p className="text-sm text-gray-600 mb-1">
+                        {slots.length===0 ? 'Für dein Team wurden noch keine Spieler angelegt.' : 'Kein passender Name gefunden.'}
+                      </p>
+                      <p className="text-xs text-gray-400">Bitte den Trainer, deinen Namen anzulegen.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {filtered.map(s=>(
+                        <button key={s.id} onClick={()=>{setPendingSlot(s);setDob('');}}
+                          className="w-full flex items-center gap-3 border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3 text-left transition-all">
+                          <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:s.color||'#CC0000'}}>
+                            {s.number||initials(s.name)}
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold">{s.name}</div>
+                            <div className="text-xs text-gray-400">{s.position}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              <button onClick={()=>auth.signOut()} className="mt-4 w-full text-xs text-gray-400 hover:text-gray-600 text-center">Abmelden</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PENDING APPROVAL SCREEN
+// ═══════════════════════════════════════════════════════════════════
+function PendingApproval({profile}) {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4"
+      style={{background:'linear-gradient(160deg,#1a0505 0%,#0d0d0d 45%,#0a0a0a 100%)'}}>
+      <div className="w-full max-w-sm text-center">
+        <div className="text-6xl mb-4">⚽</div>
+        <div className="text-4xl mb-4">⏳</div>
+        <h1 className="text-2xl font-black text-white mb-2">Genehmigung ausstehend</h1>
+        <p className="text-sm mb-6" style={{color:'rgba(255,255,255,0.5)'}}>
+          Hallo <strong className="text-white">{profile.name}</strong>, dein Antrag als <strong className="text-white">{profile.role === 'vorstand_trainer' ? 'Vorstand & Trainer' : 'Vorstand'}</strong> wird geprüft. Der Administrator wird deinen Zugang freischalten.
+        </p>
+        <div className="rounded-2xl p-4 text-left text-sm mb-6" style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)'}}>
+          <div className="font-semibold text-white mb-2 text-xs uppercase tracking-widest">Deine Angaben</div>
+          <div style={{color:'rgba(255,255,255,0.5)'}} className="text-xs space-y-1">
+            <div>Name: <span className="text-white">{profile.name}</span></div>
+            <div>E-Mail: <span className="text-white">{profile.email}</span></div>
+          </div>
+        </div>
+        <button onClick={()=>auth.signOut()} className="text-xs" style={{color:'rgba(255,255,255,0.25)'}}>Abmelden</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ADMIN — GENEHMIGUNGEN
+// ═══════════════════════════════════════════════════════════════════
+function AdminGenehmigungen({show}) {
+  const [pending, setPending] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{
+    return col('users').where('status','==','pending')
+      .onSnapshot(s=>{
+        setPending(s.docs.map(d=>({id:d.id,...d.data()})));
+        setLoading(false);
+      });
+  },[]);
+
+  const approve = async (u) => {
+    await col('users').doc(u.id).update({status:'active'});
+    show(`${u.name} genehmigt ✅`);
+  };
+  const reject = async (u) => {
+    await col('users').doc(u.id).update({status:'rejected', role:'player'});
+    show(`${u.name} abgelehnt`,'error');
+  };
+
+  if(loading) return <Spinner/>;
+
+  return (
+    <div className="p-4">
+      <div className="mb-4">
+        <h1 className="text-lg font-semibold">Registrierungs-Anfragen</h1>
+        <p className="text-xs text-gray-400">Vorstand- und Trainer-Accounts müssen genehmigt werden</p>
+      </div>
+      {pending.length===0 ? (
+        <div className="text-center text-gray-400 py-16">
+          <div className="text-4xl mb-2">✅</div>
+          <p className="text-sm">Keine ausstehenden Anfragen.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {pending.map(u=>(
+            <div key={u.id} className="bg-white border border-amber-200 rounded-xl p-4 shadow-sm">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style={{background:u.color||'#CC0000'}}>
+                  {initials(u.name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-sm">{u.name}</div>
+                  <div className="text-xs text-gray-400">{u.email}</div>
+                  <div className="text-xs text-amber-600 font-medium mt-0.5">
+                    {u.role==='vorstand_trainer'?'Vorstand & Trainer':'Vorstand'}
+                  </div>
+                </div>
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">Ausstehend</span>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>reject(u)} className="flex-1 py-2 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+                  ✕ Ablehnen
+                </button>
+                <button onClick={()=>approve(u)} className="flex-1 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-colors">
+                  ✓ Genehmigen
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  ROOT APP
 // ═══════════════════════════════════════════════════════════════════
 function App() {
-  const [profile, setProfile] = useState(undefined);  // undefined = loading
+  const [profile,   setProfile]   = useState(undefined);
+  const [authUser,  setAuthUser]  = useState(null);
+  const [noProfile, setNoProfile] = useState(false);
 
   useEffect(()=>{
     return auth.onAuthStateChanged(async (user) => {
       if (user) {
+        setAuthUser(user);
         const snap = await col('users').doc(user.uid).get();
-        setProfile(snap.exists ? {id:user.uid, ...snap.data()} : null);
+        if (snap.exists) {
+          setProfile({id:user.uid, ...snap.data()});
+          setNoProfile(false);
+        } else {
+          // Auth vorhanden, aber kein Firestore-Profil → Profil anlegen lassen
+          setProfile(null);
+          setNoProfile(true);
+        }
       } else {
+        setAuthUser(null);
         setProfile(null);
+        setNoProfile(false);
       }
     });
   },[]);
@@ -1573,23 +4249,61 @@ function App() {
     <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center">
       <div className="text-center text-white">
         <div className="text-5xl mb-4">⚽</div>
-        <div className="w-8 h-8 border-4 border-white/30 border-t-white rounded-full animate-spin mx-auto"/>
+        <div className="w-8 h-8 border-4 border-white/30 border-t-red-600 rounded-full animate-spin mx-auto"/>
         <p className="text-red-200 text-sm mt-3">KickCoach lädt…</p>
       </div>
     </div>
   );
 
-  if (!profile) return <LoginPage/>;
-
-  // Trainer & Spieler müssen nach Registrierung ein Team wählen
-  const needsTeam = (profile.role === 'trainer' || profile.role === 'player') && !profile.teamId;
-  if (needsTeam) return (
-    <TeamPicker profile={profile} onTeamSelected={(teamId)=>setProfile(p=>({...p,teamId}))}/>
+  // Auth vorhanden aber kein Profil → Profil einrichten
+  if (noProfile && authUser) return (
+    <CompleteProfile user={authUser} onDone={async ()=>{
+      const snap = await col('users').doc(authUser.uid).get();
+      if (snap.exists) { setProfile({id:authUser.uid,...snap.data()}); setNoProfile(false); }
+    }}/>
   );
 
-  if (profile.role === 'vorstand') return <AdminApp   profile={profile}/>;
-  if (profile.role === 'trainer')  return <TrainerApp profile={profile}/>;
-  if (profile.role === 'player')   return <PlayerApp  profile={profile}/>;
+  if (!profile) return <LoginPage/>;
+
+  // Vorstand-Account wartet auf Genehmigung
+  if (profile.status === 'pending') return <PendingApproval profile={profile}/>;
+  if (profile.status === 'rejected') return (
+    <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center p-4">
+      <div className="text-center">
+        <div className="text-4xl mb-4">❌</div>
+        <h2 className="text-xl font-bold text-white mb-2">Anfrage abgelehnt</h2>
+        <p className="text-red-200 text-sm mb-4">Deine Registrierung als Vorstand wurde nicht genehmigt. Bitte wende dich an den Administrator.</p>
+        <button onClick={()=>auth.signOut()} className="text-xs text-red-300 hover:text-white underline">Abmelden</button>
+      </div>
+    </div>
+  );
+
+  // Team-Auswahl nötig wenn noch kein Team gesetzt
+  const needsTeam    = (profile.role === 'trainer' || profile.role === 'player') && !profile.teamId;
+  const needsDualTeam= profile.role === 'dual' && (!profile.teamId || !profile.trainerTeamId);
+  const needsVTTeam  = profile.role === 'vorstand_trainer' && !profile.trainerTeamId;
+  if (needsTeam || needsDualTeam || needsVTTeam) return (
+    <TeamPicker profile={profile} onTeamSelected={(teams)=>setProfile(p=>({...p,...teams}))}/>
+  );
+
+  // Spieler hat Team gewählt aber noch keinen Slot verknüpft
+  const needsClaim = profile.role === 'player' && profile.claimed === false && profile.teamId;
+  if (needsClaim) return (
+    <ClaimPlayer
+      authUser={authUser}
+      profile={profile}
+      onClaimed={async ()=>{
+        const snap = await col('users').doc(authUser.uid).get();
+        if (snap.exists) setProfile({id:authUser.uid,...snap.data()});
+      }}
+    />
+  );
+
+  if (profile.role === 'vorstand')         return <AdminApp            profile={profile}/>;
+  if (profile.role === 'trainer')          return <TrainerApp          profile={profile}/>;
+  if (profile.role === 'player')           return <PlayerApp           profile={profile}/>;
+  if (profile.role === 'dual')             return <DualApp             profile={profile}/>;
+  if (profile.role === 'vorstand_trainer') return <VorstandTrainerApp  profile={profile}/>;
 
   return (
     <div className="min-h-screen flex items-center justify-center p-8 text-center">
