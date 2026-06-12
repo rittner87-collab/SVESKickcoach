@@ -1688,7 +1688,7 @@ function TrainerVerletzungen({profile, show}) {
 
   useEffect(()=>{
     const u1=col('injuries').where('teamId','==',profile.teamId).onSnapshot(s=>setInjuries(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.since?.localeCompare(a.since||''))));
-    const u2=col('users').where('teamId','==',profile.teamId).where('role','==','player').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+    const u2=col('users').where('teamId','==',profile.teamId).where('role','==','player').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>{const ai=ALL_POSITIONS.indexOf(getPositions(a)[0]);const bi=ALL_POSITIONS.indexOf(getPositions(b)[0]);return (ai===-1?99:ai)-(bi===-1?99:bi)||(a.name||'').localeCompare(b.name||'');})));
     return ()=>{u1();u2();};
   },[]);
 
@@ -1775,7 +1775,7 @@ function TrainerBeurteilungen({profile, show}) {
   const [notes, setNotes] = useState('');
 
   useEffect(()=>{
-    const u1=col('users').where('teamId','==',profile.teamId).where('role','==','player').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+    const u1=col('users').where('teamId','==',profile.teamId).where('role','==','player').onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>{const ai=ALL_POSITIONS.indexOf(getPositions(a)[0]);const bi=ALL_POSITIONS.indexOf(getPositions(b)[0]);return (ai===-1?99:ai)-(bi===-1?99:bi)||(a.name||'').localeCompare(b.name||'');})));
     const u2=col('ratings').where('teamId','==',profile.teamId).onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.createdAt?.seconds-a.createdAt?.seconds)));
     return ()=>{u1();u2();};
   },[]);
@@ -2682,7 +2682,7 @@ function AdminOverview() {
     const [users,teams,spons]=await Promise.all([getDocs_(col('users')),getDocs_(col('teams')),getDocs_(col('sponsoren'))]);
     const now = new Date();
     const warn = spons.filter(s=>{ if(!s.vertragsEnde) return false; const d=Math.ceil((new Date(s.vertragsEnde)-now)/86400000); return d>=0&&d<=30; }).length;
-    setStats({trainers:users.filter(u=>u.role==='trainer'||u.role==='dual').length,players:users.filter(u=>u.role==='player'||u.role==='dual').length,teams:teams.length,sponsoren:spons.length,sponsorenWarn:warn});
+    setStats({trainers:users.filter(u=>u.role==='trainer'||u.role==='dual'||u.role==='vorstand_trainer').length,players:users.filter(u=>u.role==='player'||u.role==='dual').length,teams:teams.length,sponsoren:spons.length,sponsorenWarn:warn});
   })();},[]);
 
   return (
@@ -4175,6 +4175,57 @@ function WochenGrid({data, onEdit, onDelete, accent='purple', emptyText='Noch ke
   );
 }
 
+// Wochenend-Event Karte (Spiel / Kleinfeldturnier)
+function WochenendEventCard({e, onEdit, onDelete}) {
+  const isFestival = e.eventTyp==='festival';
+  const gaeste = e.gaeste||[];
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div className={`px-4 py-2 flex items-center justify-between ${isFestival?'bg-amber-50':'bg-blue-50'}`}>
+        <div>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full mr-2 ${isFestival?'bg-amber-200 text-amber-800':'bg-blue-200 text-blue-800'}`}>
+            {isFestival?'🏆 Kleinfeldturnier':'⚔️ Spiel'}
+          </span>
+          <span className="text-xs font-semibold text-gray-700">{e.datum?fmtDate(e.datum):'—'}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</span>
+        </div>
+        {(onEdit||onDelete) && (
+          <div className="flex gap-1">
+            {onEdit&&<button onClick={onEdit} className="p-1 rounded hover:bg-purple-50 text-purple-400 hover:text-purple-600 text-sm">✏️</button>}
+            {onDelete&&<button onClick={onDelete} className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 text-sm">🗑</button>}
+          </div>
+        )}
+      </div>
+      <div className="px-4 py-2.5 space-y-1.5">
+        {/* Heimteam */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold w-4 text-green-600">🏠</span>
+          <span className="text-xs font-semibold text-gray-800 flex-1">{e.teamName||'—'}</span>
+          {(e.heimKabine||e.kabine) && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 bg-green-100 text-green-700 rounded-full">
+              🚿 {e.heimKabine||e.kabine}
+            </span>
+          )}
+        </div>
+        {/* Gäste */}
+        {gaeste.filter(g=>g.name).map((g,i)=>(
+          <div key={i} className="flex items-center gap-2">
+            <span className="text-[10px] w-4 text-gray-400">{isFestival?'👥':'⚔️'}</span>
+            <span className="text-xs text-gray-600 flex-1">{g.name}</span>
+            {g.kabine && (
+              <span className="text-[10px] font-semibold px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
+                🚿 {g.kabine}
+              </span>
+            )}
+          </div>
+        ))}
+        {gaeste.filter(g=>g.name).length===0 && (
+          <div className="text-xs text-gray-400 italic">Noch kein Gegner eingetragen</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AdminPlatzverwaltung({profile, show}) {
   const [tab,        setTab]        = useState('platz');
   const [teams,      setTeams]      = useState([]);
@@ -4219,23 +4270,43 @@ function AdminPlatzverwaltung({profile, show}) {
     setSaving(false);
   };
 
-  // Kabinenbelegung — multiple Tage (nur bei fest)
+  // Kabinenbelegung — multiple Tage (fest) / Wochend-Event (flexibel)
   const saveKabine = async () => {
-    if(!kabiForm.teamId||!kabiForm.kabine) return;
+    if(!kabiForm.teamId||!kabiForm.heimKabine && kabiForm.typ==='flexibel') return;
+    if(kabiForm.typ==='fest' && !kabiForm.kabine) return;
     setSaving(true);
     try {
       if(kabiForm.id){
-        const tag = kabiForm.typ==='fest'?(kabiForm.tage||[])[0]||'':kabiForm.tag||'';
-        await col('kabinenbelegung').doc(kabiForm.id).update({
-          teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),kabine:kabiForm.kabine,
-          typ:kabiForm.typ||'fest',tag,datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||''
-        });
+        if(kabiForm.typ==='fest'){
+          const tag=(kabiForm.tage||[])[0]||'';
+          await col('kabinenbelegung').doc(kabiForm.id).update({
+            teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),kabine:kabiForm.kabine,
+            typ:'fest',tag,datum:'',uhrzeit:kabiForm.uhrzeit||''
+          });
+        } else {
+          await col('kabinenbelegung').doc(kabiForm.id).update({
+            teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),
+            typ:'flexibel',eventTyp:kabiForm.eventTyp||'spiel',
+            datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||'',
+            heimKabine:kabiForm.heimKabine||'',
+            gaeste:(kabiForm.gaeste||[]).filter(g=>g.name?.trim()),
+            kabine:kabiForm.heimKabine||'' // compat field
+          });
+        }
       } else if(kabiForm.typ==='fest'){
         await Promise.all((kabiForm.tage||[]).map(tag=>
           col('kabinenbelegung').add({teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),kabine:kabiForm.kabine,typ:'fest',tag,datum:'',uhrzeit:kabiForm.uhrzeit||'',createdAt:ts()})
         ));
       } else {
-        await col('kabinenbelegung').add({teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),kabine:kabiForm.kabine,typ:'flexibel',tag:'',datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||'',createdAt:ts()});
+        await col('kabinenbelegung').add({
+          teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),
+          typ:'flexibel',eventTyp:kabiForm.eventTyp||'spiel',
+          datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||'',
+          heimKabine:kabiForm.heimKabine||'',
+          gaeste:(kabiForm.gaeste||[]).filter(g=>g.name?.trim()),
+          kabine:kabiForm.heimKabine||'', // compat
+          createdAt:ts()
+        });
       }
       show('Gespeichert ✅'); setKabiForm(null);
     } catch(e){show(e.message,'error');}
@@ -4331,77 +4402,125 @@ function AdminPlatzverwaltung({profile, show}) {
         <>
           {kabiForm && (
             <Modal title={kabiForm.id?'Eintrag bearbeiten':'Kabinenbelegung eintragen'} onClose={()=>setKabiForm(null)}>
-              <div className="mb-2">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Team</label>
-                <select value={kabiForm.teamId||''} onChange={e=>setKabiForm(p=>({...p,teamId:e.target.value}))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
-                  <option value="">— Team wählen —</option>
-                  {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
-              <Inp label="Kabine / Umkleide" value={kabiForm.kabine||''} onChange={e=>setKabiForm(p=>({...p,kabine:e.target.value}))} placeholder="z.B. Kabine 1"/>
-              <div className="mb-2">
+              <div className="mb-3">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Art</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {[['fest','🗓 Fest (Wochentag)'],['flexibel','📅 Flexibel (Datum)']].map(([v,l])=>(
+                  {[['fest','🗓 Fest (Wochentag)'],['flexibel','📅 Wochend-Event']].map(([v,l])=>(
                     <button key={v} type="button" onClick={()=>setKabiForm(p=>({...p,typ:v}))}
                       className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${kabiForm.typ===v?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{l}</button>
                   ))}
                 </div>
               </div>
-              {kabiForm.typ==='fest' ? (
+              {kabiForm.typ==='fest' ? (<>
+                <div className="mb-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Team</label>
+                  <select value={kabiForm.teamId||''} onChange={e=>setKabiForm(p=>({...p,teamId:e.target.value}))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    <option value="">— Team wählen —</option>
+                    {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <Inp label="Kabine / Umkleide" value={kabiForm.kabine||''} onChange={e=>setKabiForm(p=>({...p,kabine:e.target.value}))} placeholder="z.B. Kabine 1"/>
                 <div className="mb-2">
                   <label className="block text-xs font-medium text-gray-600 mb-1">{kabiForm.id?'Wochentag':'Wochentage (Mehrfach möglich)'}</label>
                   <div className="flex gap-1 flex-wrap">
                     {WOCHENTAGE.map(t=>{
-                      const tage=kabiForm.tage||[];
-                      const sel=tage.includes(t);
+                      const sel=(kabiForm.tage||[]).includes(t);
                       return <button key={t} type="button"
                         onClick={()=>setKabiForm(p=>({...p,tage:toggleTag(p.tage||[],t)}))}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${sel?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{t}</button>;
                     })}
                   </div>
                 </div>
-              ) : (
-                <Inp label="Datum (Wochenende)" type="date" value={kabiForm.datum||''} onChange={e=>setKabiForm(p=>({...p,datum:e.target.value}))}/>
-              )}
-              <Inp label="Uhrzeit" type="time" value={kabiForm.uhrzeit||''} onChange={e=>setKabiForm(p=>({...p,uhrzeit:e.target.value}))}/>
+                <Inp label="Uhrzeit" type="time" value={kabiForm.uhrzeit||''} onChange={e=>setKabiForm(p=>({...p,uhrzeit:e.target.value}))}/>
+              </>) : (<>
+                {/* Flexibel: Wochend-Event mit Gegnerteams */}
+                <div className="mb-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Art des Events</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[['spiel','⚔️ Spiel'],['festival','🏆 Kleinfeldturnier']].map(([v,l])=>(
+                      <button key={v} type="button" onClick={()=>setKabiForm(p=>({...p,eventTyp:v,gaeste:p.gaeste?.length?p.gaeste:[{name:'',kabine:''}]}))}
+                        className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${(kabiForm.eventTyp||'spiel')===v?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Inp label="Datum" type="date" value={kabiForm.datum||''} onChange={e=>setKabiForm(p=>({...p,datum:e.target.value}))}/>
+                  <Inp label="Uhrzeit" type="time" value={kabiForm.uhrzeit||''} onChange={e=>setKabiForm(p=>({...p,uhrzeit:e.target.value}))}/>
+                </div>
+                <div className="mb-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
+                  <div className="text-xs font-semibold text-blue-700 mb-2">🏠 Unser Team</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Team</label>
+                      <select value={kabiForm.teamId||''} onChange={e=>setKabiForm(p=>({...p,teamId:e.target.value}))}
+                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <option value="">— Team —</option>
+                        {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Kabine</label>
+                      <input value={kabiForm.heimKabine||''} onChange={e=>setKabiForm(p=>({...p,heimKabine:e.target.value}))} placeholder="Kabine 1"
+                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+                    </div>
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs font-semibold text-gray-600">⚔️ {(kabiForm.eventTyp||'spiel')==='festival'?'Gastteams':'Gegner'}</div>
+                    {(kabiForm.eventTyp||'spiel')==='festival' && (
+                      <button type="button" onClick={()=>setKabiForm(p=>({...p,gaeste:[...(p.gaeste||[]),{name:'',kabine:''}]}))}
+                        className="text-xs text-purple-600 font-semibold hover:text-purple-800">+ Team hinzufügen</button>
+                    )}
+                  </div>
+                  {(kabiForm.gaeste||[{name:'',kabine:''}]).map((g,i)=>(
+                    <div key={i} className="flex gap-2 mb-2 items-start">
+                      <div className="flex-1 grid grid-cols-2 gap-2">
+                        <input value={g.name||''} onChange={e=>setKabiForm(p=>{const g2=[...(p.gaeste||[])];g2[i]={...g2[i],name:e.target.value};return {...p,gaeste:g2};})}
+                          placeholder="Teamname (Gegner)" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+                        <input value={g.kabine||''} onChange={e=>setKabiForm(p=>{const g2=[...(p.gaeste||[])];g2[i]={...g2[i],kabine:e.target.value};return {...p,gaeste:g2};})}
+                          placeholder="Kabine" className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+                      </div>
+                      {(kabiForm.gaeste||[]).length>1 && (
+                        <button type="button" onClick={()=>setKabiForm(p=>({...p,gaeste:(p.gaeste||[]).filter((_,j)=>j!==i)}))}
+                          className="mt-1 text-gray-300 hover:text-red-400 text-sm">✕</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>)}
               <div className="flex gap-2 mt-3">
                 <Btn variant="secondary" className="flex-1" onClick={()=>setKabiForm(null)}>Abbrechen</Btn>
-                <Btn className="flex-1" onClick={saveKabine} disabled={!kabiForm.teamId||!kabiForm.kabine||saving}>{saving?'…':'Speichern'}</Btn>
+                <Btn className="flex-1" onClick={saveKabine} disabled={saving}>{saving?'…':'Speichern'}</Btn>
               </div>
             </Modal>
           )}
           <div className="flex justify-between items-center mb-2">
             <div className="text-sm font-semibold">Kabinenbelegungsplan</div>
-            <button onClick={()=>setKabiForm({teamId:'',kabine:'',typ:'fest',tage:[],datum:'',uhrzeit:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
+            <button onClick={()=>setKabiForm({teamId:'',kabine:'',typ:'fest',tage:[],datum:'',uhrzeit:'',eventTyp:'spiel',heimKabine:'',gaeste:[{name:'',kabine:''}]})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
           </div>
           {/* Fest-Wochengitter */}
           <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Fest (Wochentage)</div>
           <WochenGrid data={kabiGrid}
-            onEdit={e=>setKabiForm({...e,tage:[e.tag]})}
+            onEdit={e=>setKabiForm({...e,tage:[e.tag],eventTyp:'spiel',heimKabine:e.kabine||'',gaeste:[{name:'',kabine:''}]})}
             onDelete={id=>setDelId(['kabinenbelegung',id])}
             emptyText="Noch keine feste Kabinenbelegung."/>
-          {/* Flexibel-Liste */}
-          {kabinenbel.filter(k=>k.typ==='flexibel').length>0 && (
-            <div className="mt-4">
-              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Flexibel (Wochenende)</div>
-              <div className="space-y-1.5">
+          {/* Flexibel-Wochenendevents */}
+          <div className="mt-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Wochenend-Events</div>
+            {kabinenbel.filter(k=>k.typ==='flexibel').length===0 ? (
+              <div className="text-center text-gray-400 py-4 text-xs">Noch keine Wochenend-Events eingetragen.</div>
+            ) : (
+              <div className="space-y-2">
                 {kabinenbel.filter(k=>k.typ==='flexibel').sort((a,b)=>(a.datum||'').localeCompare(b.datum||'')).map(e=>(
-                  <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
-                      <div className="text-xs text-gray-500">{e.datum?fmtDate(e.datum):'—'}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
-                    </div>
-                    <div className="flex gap-1">
-                      <button onClick={()=>setKabiForm({...e,tage:[]})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
-                      <button onClick={()=>setDelId(['kabinenbelegung',e.id])} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
-                    </div>
-                  </div>
+                  <WochenendEventCard key={e.id} e={e}
+                    onEdit={()=>setKabiForm({...e,tage:[],eventTyp:e.eventTyp||'spiel',heimKabine:e.heimKabine||e.kabine||'',gaeste:e.gaeste?.length?e.gaeste:[{name:'',kabine:''}]})}
+                    onDelete={()=>setDelId(['kabinenbelegung',e.id])}/>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </>
       )}
 
@@ -4487,19 +4606,18 @@ function TrainerPlatzverwaltung({profile, show}) {
           <div className="text-sm font-semibold mb-2">Kabinenbelegungsplan</div>
           <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Fest (Wochentage)</div>
           <WochenGrid data={kabiGrid} emptyText="Noch keine feste Kabinenbelegung."/>
-          {kabinenbel.filter(k=>k.typ==='flexibel').length>0 && (
-            <div className="mt-4">
-              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Flexibel (Wochenende)</div>
-              <div className="space-y-1.5">
+          <div className="mt-4">
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Wochenend-Events</div>
+            {kabinenbel.filter(k=>k.typ==='flexibel').length===0 ? (
+              <div className="text-center text-gray-400 py-4 text-xs">Noch keine Wochenend-Events eingetragen.</div>
+            ) : (
+              <div className="space-y-2">
                 {kabinenbel.filter(k=>k.typ==='flexibel').sort((a,b)=>(a.datum||'').localeCompare(b.datum||'')).map(e=>(
-                  <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
-                    <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
-                    <div className="text-xs text-gray-500">{e.datum?fmtDate(e.datum):'—'}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
-                  </div>
+                  <WochenendEventCard key={e.id} e={e}/>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </>
       )}
 
