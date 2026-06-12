@@ -1907,6 +1907,63 @@ function ChatPage({profile, accent='red'}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  TRAINER — BENACHRICHTIGUNGEN
+// ═══════════════════════════════════════════════════════════════════
+function TrainerBenachrichtigungen({profile}) {
+  const [notifs, setNotifs] = useState([]);
+
+  useEffect(()=>{
+    return col('benachrichtigungen')
+      .onSnapshot(s=>setNotifs(
+        s.docs.map(d=>({id:d.id,...d.data()}))
+          .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))
+      ));
+  },[]);
+
+  const markRead = async (n) => {
+    if((n.gelesenVon||[]).includes(profile.uid)) return;
+    await col('benachrichtigungen').doc(n.id).update({
+      gelesenVon: firebase.firestore.FieldValue.arrayUnion(profile.uid)
+    });
+  };
+
+  const unread = notifs.filter(n=>!(n.gelesenVon||[]).includes(profile.uid));
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-1">Benachrichtigungen</h1>
+      <p className="text-xs text-gray-400 mb-4">{unread.length} ungelesen</p>
+      {notifs.length===0 ? (
+        <div className="text-center text-gray-400 py-12 text-sm">Keine Benachrichtigungen.</div>
+      ) : (
+        <div className="space-y-3">
+          {notifs.map(n=>{
+            const isRead = (n.gelesenVon||[]).includes(profile.uid);
+            return (
+              <div key={n.id} onClick={()=>markRead(n)}
+                className={`bg-white border rounded-xl p-4 cursor-pointer transition-all ${isRead?'border-gray-200 opacity-70':'border-purple-300 shadow-sm'}`}>
+                <div className="flex items-start gap-2">
+                  {!isRead && <div className="w-2 h-2 rounded-full bg-purple-500 mt-1.5 flex-shrink-0"/>}
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm font-semibold ${isRead?'text-gray-600':'text-gray-900'}`}>{n.titel}</div>
+                    {n.nachricht && <div className="text-xs text-gray-500 mt-0.5">{n.nachricht}</div>}
+                    <div className="flex flex-wrap gap-3 mt-1.5 text-[11px] text-gray-400">
+                      {n.frist && <span>📅 Frist: {fmtDate(n.frist)}</span>}
+                      {n.verantwortlicherName && <span>👤 {n.verantwortlicherName}</span>}
+                      {n.createdBy && <span>Von: {n.createdBy}</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  TRAINER APP
 // ═══════════════════════════════════════════════════════════════════
 function TrainerApp({profile}) {
@@ -1923,7 +1980,7 @@ function TrainerApp({profile}) {
     {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
-    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'}]},
+    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
   ];
 
   // Team name lookup
@@ -1955,9 +2012,10 @@ function TrainerApp({profile}) {
     verletzungen:  <><TeamSwitcher/><TrainerVerletzungen  key={activeTeamId} profile={activeProfile} show={show}/></>,
     beurteilungen: <><TeamSwitcher/><TrainerBeurteilungen key={activeTeamId} profile={activeProfile} show={show}/></>,
     chat:          <><TeamSwitcher/><ChatPage             key={activeTeamId} profile={activeProfile} accent="red"/></>,
-    busplanung:    <TrainerBusplanung profile={activeProfile} show={show}/>,
-    dokumente:     <TrainerDokumente/>,
-    vorstand:      <TrainerNachrichtAnVorstand profile={profile}/>,
+    busplanung:         <TrainerBusplanung profile={activeProfile} show={show}/>,
+    dokumente:          <TrainerDokumente/>,
+    vorstand:           <TrainerNachrichtAnVorstand profile={profile}/>,
+    benachrichtigungen: <TrainerBenachrichtigungen profile={profile}/>,
   };
 
   return (
@@ -3813,6 +3871,380 @@ function AdminPlayerDetail({player, onClose, show}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  ADMIN — SPONSOREN
+// ═══════════════════════════════════════════════════════════════════
+function AdminSponsoren({show}) {
+  const [sponsoren, setSponsoren] = useState([]);
+  const [form, setForm] = useState(null); // null | {} | sponsor-obj
+  const [delId, setDelId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const EMPTY = {name:'',kontakt:'',email:'',telefon:'',leistungen:'',vertragsStart:'',vertragsEnde:'',werbeflaechen:'',notizen:''};
+
+  useEffect(()=>{
+    return col('sponsoren').onSnapshot(s=>
+      setSponsoren(s.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>a.name.localeCompare(b.name)))
+    );
+  },[]);
+
+  const daysUntil = (dateStr) => {
+    if(!dateStr) return null;
+    const diff = Math.ceil((new Date(dateStr)-new Date())/86400000);
+    return diff;
+  };
+
+  const statusBadge = (dateStr) => {
+    const d = daysUntil(dateStr);
+    if(d===null) return null;
+    if(d < 0)   return {label:'Abgelaufen',  bg:'bg-red-100',   text:'text-red-700'};
+    if(d <= 30) return {label:`${d}T verbleibend`, bg:'bg-amber-100', text:'text-amber-700'};
+    if(d <= 90) return {label:`${d}T verbleibend`, bg:'bg-yellow-100',text:'text-yellow-700'};
+    return       {label:'Aktiv', bg:'bg-green-100', text:'text-green-700'};
+  };
+
+  const save = async () => {
+    if(!form.name?.trim()) return;
+    setSaving(true);
+    try {
+      const data = {...form, name:form.name.trim()};
+      if(form.id) await col('sponsoren').doc(form.id).update(data);
+      else        await col('sponsoren').add({...data, createdAt:ts()});
+      show(form.id?'Sponsor aktualisiert ✅':'Sponsor gespeichert ✅');
+      setForm(null);
+    } catch(e){ show(e.message,'error'); }
+    setSaving(false);
+  };
+
+  const doDelete = async () => {
+    await col('sponsoren').doc(delId).delete();
+    show('Sponsor gelöscht'); setDelId(null);
+  };
+
+  const expiringCount = sponsoren.filter(s=>{ const d=daysUntil(s.vertragsEnde); return d!==null&&d>=0&&d<=30; }).length;
+  const expiredCount  = sponsoren.filter(s=>{ const d=daysUntil(s.vertragsEnde); return d!==null&&d<0; }).length;
+
+  return (
+    <div className="p-4">
+      {/* Delete Modal */}
+      {delId && (
+        <Modal title="Sponsor löschen?" onClose={()=>setDelId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diesen Sponsor wirklich löschen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelId(null)}>Abbrechen</Btn>
+            <button onClick={doDelete} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit/Add Modal */}
+      {form && (
+        <Modal title={form.id?'Sponsor bearbeiten':'Neuer Sponsor'} onClose={()=>setForm(null)}>
+          <div className="space-y-1 max-h-[70vh] overflow-y-auto">
+            <Inp label="Sponsorname *" value={form.name||''} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="Firma / Person"/>
+            <Inp label="Ansprechpartner" value={form.kontakt||''} onChange={e=>setForm(p=>({...p,kontakt:e.target.value}))} placeholder="Max Mustermann"/>
+            <Inp label="E-Mail" type="email" value={form.email||''} onChange={e=>setForm(p=>({...p,email:e.target.value}))}/>
+            <Inp label="Telefon" value={form.telefon||''} onChange={e=>setForm(p=>({...p,telefon:e.target.value}))}/>
+            <div className="grid grid-cols-2 gap-2">
+              <Inp label="Vertrag von" type="date" value={form.vertragsStart||''} onChange={e=>setForm(p=>({...p,vertragsStart:e.target.value}))}/>
+              <Inp label="Vertrag bis" type="date" value={form.vertragsEnde||''} onChange={e=>setForm(p=>({...p,vertragsEnde:e.target.value}))}/>
+            </div>
+            <div className="mb-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Sponsorenleistungen</label>
+              <textarea rows={2} value={form.leistungen||''} onChange={e=>setForm(p=>({...p,leistungen:e.target.value}))}
+                placeholder="z.B. Trikotsponsor, Bandenwerbung …"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+            </div>
+            <div className="mb-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Werbeflächen</label>
+              <textarea rows={2} value={form.werbeflaechen||''} onChange={e=>setForm(p=>({...p,werbeflaechen:e.target.value}))}
+                placeholder="z.B. Bande Seite A, Vereinsheft Rückseite …"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+            </div>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Notizen</label>
+              <textarea rows={2} value={form.notizen||''} onChange={e=>setForm(p=>({...p,notizen:e.target.value}))}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setForm(null)}>Abbrechen</Btn>
+            <Btn className="flex-1" onClick={save} disabled={!form.name?.trim()||saving}>{saving?'…':'Speichern'}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-lg font-semibold">Sponsoren</h1>
+          <p className="text-xs text-gray-400">{sponsoren.length} Sponsor{sponsoren.length!==1?'en':''}</p>
+        </div>
+        <button onClick={()=>setForm({...EMPTY})}
+          className="px-3 py-2 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 transition-colors">
+          + Neu
+        </button>
+      </div>
+
+      {/* Hinweis-Banner */}
+      {(expiringCount>0||expiredCount>0) && (
+        <div className={`mb-4 rounded-xl px-4 py-3 text-sm font-medium flex items-center gap-2 ${expiredCount>0?'bg-red-50 text-red-700 border border-red-200':'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+          ⚠️ {expiredCount>0 && `${expiredCount} Vertrag${expiredCount>1?'träge':''} abgelaufen. `}
+          {expiringCount>0 && `${expiringCount} Vertrag${expiringCount>1?'träge':''} läuft bald ab.`}
+        </div>
+      )}
+
+      {sponsoren.length===0 ? (
+        <div className="text-center text-gray-400 py-12 text-sm">Noch keine Sponsoren eingetragen.</div>
+      ) : (
+        <div className="space-y-3">
+          {sponsoren.map(s=>{
+            const badge = statusBadge(s.vertragsEnde);
+            return (
+              <div key={s.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm">{s.name}</div>
+                    {s.kontakt && <div className="text-xs text-gray-500">👤 {s.kontakt}</div>}
+                    {s.email   && <div className="text-xs text-gray-500">✉️ {s.email}</div>}
+                    {s.telefon && <div className="text-xs text-gray-500">📞 {s.telefon}</div>}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {badge && <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge.bg} ${badge.text}`}>{badge.label}</span>}
+                    <button onClick={()=>setForm({...s})} className="p-1.5 rounded-lg hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
+                    <button onClick={()=>setDelId(s.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
+                  </div>
+                </div>
+                {(s.vertragsStart||s.vertragsEnde) && (
+                  <div className="text-[11px] text-gray-500 mb-1.5">
+                    📅 {s.vertragsStart&&fmtDate(s.vertragsStart)} {s.vertragsStart&&s.vertragsEnde&&'→'} {s.vertragsEnde&&fmtDate(s.vertragsEnde)}
+                  </div>
+                )}
+                {s.leistungen && (
+                  <div className="text-[11px] bg-purple-50 text-purple-700 rounded-lg px-2 py-1 mb-1">🎁 {s.leistungen}</div>
+                )}
+                {s.werbeflaechen && (
+                  <div className="text-[11px] bg-gray-50 text-gray-600 rounded-lg px-2 py-1 mb-1">📋 {s.werbeflaechen}</div>
+                )}
+                {s.notizen && (
+                  <div className="text-[11px] text-gray-400 mt-1 italic">{s.notizen}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ADMIN — AUFGABEN
+// ═══════════════════════════════════════════════════════════════════
+function AdminAufgaben({profile, show}) {
+  const [aufgaben, setAufgaben] = useState([]);
+  const [trainer,  setTrainer]  = useState([]);
+  const [form,     setForm]     = useState(null);
+  const [delId,    setDelId]    = useState(null);
+  const [saving,   setSaving]   = useState(false);
+  const [filter,   setFilter]   = useState('alle'); // 'alle'|'offen'|'in_bearbeitung'|'erledigt'
+  const EMPTY = {titel:'',beschreibung:'',verantwortlicherId:'',verantwortlicherName:'',frist:'',status:'offen',prioritaet:'mittel'};
+
+  const PRIO  = {hoch:{l:'Hoch',bg:'bg-red-100',text:'text-red-700'},mittel:{l:'Mittel',bg:'bg-yellow-100',text:'text-yellow-700'},niedrig:{l:'Niedrig',bg:'bg-green-100',text:'text-green-700'}};
+  const STATUS= {offen:{l:'Offen',bg:'bg-gray-100',text:'text-gray-600'},in_bearbeitung:{l:'In Bearbeitung',bg:'bg-blue-100',text:'text-blue-700'},erledigt:{l:'Erledigt',bg:'bg-green-100',text:'text-green-700'}};
+
+  useEffect(()=>{
+    const u1 = col('aufgaben').onSnapshot(s=>
+      setAufgaben(s.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>(a.frist||'').localeCompare(b.frist||'')))
+    );
+    col('users').where('status','==','active').get().then(s=>{
+      setTrainer(s.docs.map(d=>({id:d.id,...d.data()}))
+        .filter(u=>u.role==='trainer'||u.role==='dual'||u.role==='vorstand_trainer'));
+    });
+    return ()=>u1();
+  },[]);
+
+  const save = async () => {
+    if(!form.titel?.trim()) return;
+    setSaving(true);
+    try {
+      const data = {
+        ...form, titel:form.titel.trim(),
+        createdBy: profile.name, updatedAt: ts()
+      };
+      let aufgabeId;
+      if(form.id){
+        await col('aufgaben').doc(form.id).update(data);
+        aufgabeId = form.id;
+        show('Aufgabe aktualisiert ✅');
+      } else {
+        data.createdAt = ts(); data.status = 'offen';
+        const ref = await col('aufgaben').add(data);
+        aufgabeId = ref.id;
+        // In-App-Benachrichtigung für Trainer
+        await col('benachrichtigungen').add({
+          typ: 'aufgabe', aufgabeId,
+          titel: `Neue Aufgabe: ${data.titel}`,
+          nachricht: data.beschreibung||'',
+          frist: data.frist||'',
+          verantwortlicherName: data.verantwortlicherName||'Alle',
+          gelesenVon: [],
+          createdAt: ts(), createdBy: profile.name
+        });
+        show('Aufgabe erstellt & Trainer benachrichtigt ✅');
+      }
+      setForm(null);
+    } catch(e){ show(e.message,'error'); }
+    setSaving(false);
+  };
+
+  const updateStatus = async (id, status) => {
+    await col('aufgaben').doc(id).update({status, updatedAt:ts()});
+  };
+
+  const doDelete = async () => {
+    await col('aufgaben').doc(delId).delete();
+    show('Aufgabe gelöscht'); setDelId(null);
+  };
+
+  const daysUntil = (d) => d ? Math.ceil((new Date(d)-new Date())/86400000) : null;
+
+  const filtered = filter==='alle' ? aufgaben : aufgaben.filter(a=>a.status===filter);
+
+  const counts = {
+    offen:          aufgaben.filter(a=>a.status==='offen').length,
+    in_bearbeitung: aufgaben.filter(a=>a.status==='in_bearbeitung').length,
+    erledigt:       aufgaben.filter(a=>a.status==='erledigt').length,
+  };
+
+  return (
+    <div className="p-4">
+      {/* Delete Modal */}
+      {delId && (
+        <Modal title="Aufgabe löschen?" onClose={()=>setDelId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diese Aufgabe wirklich löschen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelId(null)}>Abbrechen</Btn>
+            <button onClick={doDelete} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Form Modal */}
+      {form && (
+        <Modal title={form.id?'Aufgabe bearbeiten':'Neue Aufgabe'} onClose={()=>setForm(null)}>
+          <div className="space-y-1 max-h-[70vh] overflow-y-auto">
+            <Inp label="Titel *" value={form.titel||''} onChange={e=>setForm(p=>({...p,titel:e.target.value}))} placeholder="Aufgabentitel"/>
+            <div className="mb-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Beschreibung</label>
+              <textarea rows={3} value={form.beschreibung||''} onChange={e=>setForm(p=>({...p,beschreibung:e.target.value}))}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+            </div>
+            <div className="mb-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Verantwortlich</label>
+              <select value={form.verantwortlicherId||''} onChange={e=>{
+                  const u=trainer.find(t=>t.id===e.target.value);
+                  setForm(p=>({...p,verantwortlicherId:e.target.value,verantwortlicherName:u?.name||''}));
+                }}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                <option value="">— Alle Trainer —</option>
+                {trainer.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <Inp label="Frist" type="date" value={form.frist||''} onChange={e=>setForm(p=>({...p,frist:e.target.value}))}/>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Priorität</label>
+              <div className="grid grid-cols-3 gap-2">
+                {Object.entries(PRIO).map(([k,v])=>(
+                  <button key={k} onClick={()=>setForm(p=>({...p,prioritaet:k}))}
+                    className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${form.prioritaet===k?`border-purple-500 ${v.bg} ${v.text}`:'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                    {v.l}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          {!form.id && <p className="text-[11px] text-purple-500 mb-2">📬 Alle Trainer werden benachrichtigt.</p>}
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setForm(null)}>Abbrechen</Btn>
+            <Btn className="flex-1" onClick={save} disabled={!form.titel?.trim()||saving}>{saving?'…':'Speichern'}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-lg font-semibold">Aufgaben</h1>
+          <p className="text-xs text-gray-400">{aufgaben.length} Aufgabe{aufgaben.length!==1?'n':''}</p>
+        </div>
+        <button onClick={()=>setForm({...EMPTY})}
+          className="px-3 py-2 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 transition-colors">
+          + Neu
+        </button>
+      </div>
+
+      {/* Status-Übersicht */}
+      <div className="grid grid-cols-3 gap-2 mb-4">
+        {[['offen','🔴','Offen'],['in_bearbeitung','🔵','Läuft'],['erledigt','🟢','Erledigt']].map(([k,e,l])=>(
+          <button key={k} onClick={()=>setFilter(filter===k?'alle':k)}
+            className={`text-center py-2.5 rounded-xl border-2 transition-all ${filter===k?'border-purple-500 bg-purple-50':'border-gray-200 bg-white hover:border-gray-300'}`}>
+            <div className="text-lg">{e}</div>
+            <div className="text-base font-bold">{counts[k]}</div>
+            <div className="text-[10px] text-gray-500">{l}</div>
+          </button>
+        ))}
+      </div>
+
+      {filtered.length===0 ? (
+        <div className="text-center text-gray-400 py-10 text-sm">Keine Aufgaben.</div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(a=>{
+            const prio = PRIO[a.prioritaet]||PRIO.mittel;
+            const stat = STATUS[a.status]||STATUS.offen;
+            const days = daysUntil(a.frist);
+            const overdue = days!==null && days<0 && a.status!=='erledigt';
+            return (
+              <div key={a.id} className={`bg-white border rounded-xl p-4 ${overdue?'border-red-300':'border-gray-200'}`}>
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap gap-1.5 mb-1">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${prio.bg} ${prio.text}`}>{prio.l}</span>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${stat.bg} ${stat.text}`}>{stat.l}</span>
+                      {overdue && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">⚠️ Überfällig</span>}
+                    </div>
+                    <div className="font-semibold text-sm">{a.titel}</div>
+                    {a.beschreibung && <div className="text-xs text-gray-500 mt-0.5">{a.beschreibung}</div>}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={()=>setForm({...a})} className="p-1.5 rounded-lg hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
+                    <button onClick={()=>setDelId(a.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-3 text-[11px] text-gray-500 mb-2">
+                  {a.verantwortlicherName && <span>👤 {a.verantwortlicherName}</span>}
+                  {a.frist && <span className={overdue?'text-red-600 font-semibold':''}>{overdue?'⚠️':''} Frist: {fmtDate(a.frist)}{days!==null&&!overdue&&days<=7?` (${days}T)`:''}  </span>}
+                  {a.createdBy && <span>Erstellt von {a.createdBy}</span>}
+                </div>
+                {/* Status-Wechsel */}
+                <div className="flex gap-1.5">
+                  {Object.entries(STATUS).map(([k,v])=>(
+                    <button key={k} onClick={()=>updateStatus(a.id,k)} disabled={a.status===k}
+                      className={`flex-1 py-1 rounded-lg text-[10px] font-semibold transition-all border
+                        ${a.status===k?`${v.bg} ${v.text} border-transparent`:'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'}`}>
+                      {v.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  ADMIN APP
 // ═══════════════════════════════════════════════════════════════════
 function AdminApp({profile}) {
@@ -3833,6 +4265,10 @@ function AdminApp({profile}) {
       {id:'dokumente',     icon:'📁',  label:'Dokumente'},
       {id:'nachrichten',   icon:'💬',  label:'Nachrichten'},
     ]},
+    {section:'Management', items:[
+      {id:'sponsoren',     icon:'🤝',  label:'Sponsoren'},
+      {id:'aufgaben',      icon:'📋',  label:'Aufgaben'},
+    ]},
   ];
 
   const content = {
@@ -3845,6 +4281,8 @@ function AdminApp({profile}) {
     pinnwand:           <AdminPinnwand profile={profile} show={show}/>,
     dokumente:          <AdminDokumente profile={profile} show={show}/>,
     nachrichten:        <VorstandNachrichten profile={profile}/>,
+    sponsoren:          <AdminSponsoren show={show}/>,
+    aufgaben:           <AdminAufgaben profile={profile} show={show}/>,
   };
 
   return (
