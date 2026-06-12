@@ -4140,6 +4140,8 @@ function Vereinskalender({profile, canEdit}) {
 //  PLATZVERWALTUNG (Vorstand: bearbeiten / Trainer: ansehen + Mängel)
 // ═══════════════════════════════════════════════════════════════════
 const WOCHENTAGE = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+const PLAETZE_OPTIONS = ['V1','V2','V3','V4','Käfig'];
+const platzLabel = (e) => (e.plaetze?.length ? e.plaetze.join(', ') : e.platz||'');
 
 // ── Wiederverwendbares Wochengitter für Platz/Kabine ─────────────
 function WochenGrid({data, onEdit, onDelete, accent='purple', emptyText='Noch keine Einträge.'}) {
@@ -4250,19 +4252,19 @@ function AdminPlatzverwaltung({profile, show}) {
 
   // Platzbelegung — multiple Tage → je ein Dokument
   const savePlatz = async () => {
-    if(!form.teamId||!(form.tage||[]).length||!form.platz) return;
+    if(!form.teamId||!(form.tage||[]).length||!(form.plaetze||[]).length) return;
     setSaving(true);
     try {
+      const plaetze = form.plaetze||[];
+      const platz = plaetze.join(', ');
       if(form.id){
-        // Edit: update single existing entry
         await col('platzbelegung').doc(form.id).update({
           teamId:form.teamId,teamName:tName(form.teamId),tag:form.tage[0],
-          platz:form.platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||''
+          plaetze,platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||''
         });
       } else {
-        // Create: one doc per selected day
         await Promise.all((form.tage).map(tag=>
-          col('platzbelegung').add({teamId:form.teamId,teamName:tName(form.teamId),tag,platz:form.platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||'',createdAt:ts()})
+          col('platzbelegung').add({teamId:form.teamId,teamName:tName(form.teamId),tag,plaetze,platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||'',createdAt:ts()})
         ));
       }
       show('Gespeichert ✅'); setForm(null);
@@ -4329,7 +4331,7 @@ function AdminPlatzverwaltung({profile, show}) {
   );
 
   // Grid data
-  const platzGrid = platzbel.map(e=>({...e,label:e.teamName,sublabel:`📍${e.platz}${e.uhrzeitVon?` ${e.uhrzeitVon}-${e.uhrzeitBis}`:''}`,color:teamColor(e.teamName)}));
+  const platzGrid = platzbel.map(e=>({...e,label:e.teamName,sublabel:`📍${platzLabel(e)}${e.uhrzeitVon?` ${e.uhrzeitVon}-${e.uhrzeitBis}`:''}`,color:teamColor(e.teamName)}));
   const kabiGrid  = kabinenbel.filter(k=>k.typ==='fest').map(e=>({...e,label:e.teamName,sublabel:`🚿${e.kabine}${e.uhrzeit?` ${e.uhrzeit}`:''}`,color:teamColor(e.teamName)}));
 
   return (
@@ -4375,23 +4377,33 @@ function AdminPlatzverwaltung({profile, show}) {
                   })}
                 </div>
               </div>
-              <Inp label="Platz / Feld" value={form.platz||''} onChange={e=>setForm(p=>({...p,platz:e.target.value}))} placeholder="z.B. Hauptplatz, Nebenplatz"/>
+              <div className="mb-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Platz / Feld (Mehrfach möglich)</label>
+                <div className="flex gap-1 flex-wrap">
+                  {PLAETZE_OPTIONS.map(p=>{
+                    const sel=(form.plaetze||[]).includes(p);
+                    return <button key={p} type="button"
+                      onClick={()=>setForm(f=>({...f,plaetze:toggleTag(f.plaetze||[],p)}))}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${sel?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{p}</button>;
+                  })}
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div><label className="block text-xs font-medium text-gray-600 mb-1">Von</label><input type="time" value={form.uhrzeitVon||''} onChange={e=>setForm(p=>({...p,uhrzeitVon:e.target.value}))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
                 <div><label className="block text-xs font-medium text-gray-600 mb-1">Bis</label><input type="time" value={form.uhrzeitBis||''} onChange={e=>setForm(p=>({...p,uhrzeitBis:e.target.value}))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
               </div>
               <div className="flex gap-2 mt-3">
                 <Btn variant="secondary" className="flex-1" onClick={()=>setForm(null)}>Abbrechen</Btn>
-                <Btn className="flex-1" onClick={savePlatz} disabled={!form.teamId||!(form.tage||[]).length||!form.platz||saving}>{saving?'…':'Speichern'}</Btn>
+                <Btn className="flex-1" onClick={savePlatz} disabled={!form.teamId||!(form.tage||[]).length||!(form.plaetze||[]).length||saving}>{saving?'…':'Speichern'}</Btn>
               </div>
             </Modal>
           )}
           <div className="flex justify-between items-center mb-2">
             <div className="text-sm font-semibold">Platzbelegungsplan</div>
-            <button onClick={()=>setForm({teamId:'',tage:[],platz:'',uhrzeitVon:'',uhrzeitBis:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
+            <button onClick={()=>setForm({teamId:'',tage:[],plaetze:[],uhrzeitVon:'',uhrzeitBis:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
           </div>
           <WochenGrid data={platzGrid}
-            onEdit={e=>setForm({...e,tage:[e.tag]})}
+            onEdit={e=>setForm({...e,tage:[e.tag],plaetze:e.plaetze||[]})}
             onDelete={id=>setDelId(['platzbelegung',id])}
             emptyText="Noch keine Platzbelegung eingetragen."/>
         </>
@@ -4581,7 +4593,7 @@ function TrainerPlatzverwaltung({profile, show}) {
     <button onClick={()=>setTab(id)} className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-red-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{label}</button>
   );
 
-  const platzGrid = platzbel.map(e=>({...e,label:e.teamName,sublabel:`📍${e.platz}${e.uhrzeitVon?` ${e.uhrzeitVon}-${e.uhrzeitBis}`:''}`,color:teamColor(e.teamName)}));
+  const platzGrid = platzbel.map(e=>({...e,label:e.teamName,sublabel:`📍${platzLabel(e)}${e.uhrzeitVon?` ${e.uhrzeitVon}-${e.uhrzeitBis}`:''}`,color:teamColor(e.teamName)}));
   const kabiGrid  = kabinenbel.filter(k=>k.typ==='fest').map(e=>({...e,label:e.teamName,sublabel:`🚿${e.kabine}${e.uhrzeit?` ${e.uhrzeit}`:''}`,color:teamColor(e.teamName)}));
 
   return (
