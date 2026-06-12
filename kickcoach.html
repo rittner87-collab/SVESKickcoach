@@ -556,7 +556,7 @@ function TrainerKader({profile, show}) {
 
   useEffect(()=>{
     return col('users').where('teamId','==',profile.teamId).where('role','==','player')
-      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>{const ai=ALL_POSITIONS.indexOf(getPositions(a)[0]);const bi=ALL_POSITIONS.indexOf(getPositions(b)[0]);return (ai===-1?99:ai)-(bi===-1?99:bi)||(a.name||'').localeCompare(b.name||'');})));
   },[]);
 
   const openNew  = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
@@ -3620,7 +3620,7 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
   useEffect(()=>{
     if(!selTeam) return;
     return col('users').where('teamId','==',selTeam).where('role','==','player')
-      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
+      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>{const ai=ALL_POSITIONS.indexOf(getPositions(a)[0]);const bi=ALL_POSITIONS.indexOf(getPositions(b)[0]);return (ai===-1?99:ai)-(bi===-1?99:bi)||(a.name||'').localeCompare(b.name||'');})));
   },[selTeam]);
 
   const togglePosAdmin = (pos) => setForm(f=>({...f, positions: (f.positions||[]).includes(pos)?f.positions.filter(x=>x!==pos):[...(f.positions||[]),pos]}));
