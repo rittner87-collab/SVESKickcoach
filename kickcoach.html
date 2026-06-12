@@ -788,6 +788,7 @@ function TrainerTraining({profile, show}) {
           onSetStatus={setPlayerStatus}
           onEdit={(s)=>{setDetail(null);openEdit(s);}}
           onClose={()=>setDetail(null)}
+          show={show}
         />
       )}
 
@@ -880,14 +881,14 @@ const SessionCard = ({s, drillMap, att, faded=false, onDetail, onEdit, onDelete}
   </div>
 );
 
-function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, onClose}) {
+function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, onClose, show}) {
   const [saving,     setSaving]     = useState({});
   const [uploading,  setUploading]  = useState(false);
   const [uploadPct,  setUploadPct]  = useState(0);
   const [files,      setFiles]      = useState(session.files||[]);
+  const [uploadErr,  setUploadErr]  = useState('');
   const fileRef = useRef();
 
-  // Sync wenn session prop sich ändert (nach Firestore-Update)
   useEffect(()=>setFiles(session.files||[]),[session.files]);
 
   const setStatus = async (player, status) => {
@@ -898,20 +899,34 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
 
   const uploadFile = async (e) => {
     const file = e.target.files?.[0]; if(!file) return;
-    setUploading(true); setUploadPct(0);
+    setUploading(true); setUploadPct(0); setUploadErr('');
     try {
-      const path = `sessions/${session.id}/${Date.now()}_${file.name}`;
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+      const path = `sessions/${session.id}/${Date.now()}_${safeName}`;
       const ref  = storage.ref(path);
-      const task = ref.put(file);
-      task.on('state_changed', snap=>setUploadPct(Math.round(snap.bytesTransferred/snap.totalBytes*100)));
-      await task;
+      await new Promise((resolve, reject) => {
+        const task = ref.put(file);
+        task.on('state_changed',
+          snap => setUploadPct(Math.round(snap.bytesTransferred/snap.totalBytes*100)),
+          err  => reject(err),
+          ()   => resolve()
+        );
+      });
       const url = await ref.getDownloadURL();
       const meta = {name:file.name, url, path, type:file.type, uploadedAt:new Date().toISOString()};
       await col('sessions').doc(session.id).update({
         files: firebase.firestore.FieldValue.arrayUnion(meta)
       });
       setFiles(f=>[...f, meta]);
-    } catch(err){ console.error(err); }
+      if(show) show('Datei hochgeladen ✅');
+    } catch(err){
+      console.error(err);
+      const msg = err.code==='storage/unauthorized'
+        ? 'Keine Berechtigung – bitte Firebase Storage-Regeln prüfen.'
+        : err.message||'Upload fehlgeschlagen';
+      setUploadErr(msg);
+      if(show) show(msg,'error');
+    }
     setUploading(false); setUploadPct(0);
     e.target.value='';
   };
@@ -1038,6 +1053,9 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
               <div className="mb-3 bg-gray-100 rounded-full h-2 overflow-hidden">
                 <div className="h-2 bg-red-500 transition-all rounded-full" style={{width:`${uploadPct}%`}}/>
               </div>
+            )}
+            {uploadErr && (
+              <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600">{uploadErr}</div>
             )}
 
             {files.length===0 && !uploading && (
@@ -1653,19 +1671,28 @@ function LineupBuilder({game, players, profile, onClose, show}) {
 // ═══════════════════════════════════════════════════════════════════
 function TrainerSpiele({profile, show}) {
   const EMPTY_G = {date:'',time:'15:00',opponent:'',location:'',home:true,scoreHome:'',scoreAway:'',notes:''};
-  const [games,    setGames]   = useState([]);
-  const [players,  setPlayers] = useState([]);
-  const [open,     setOpen]    = useState(false);
-  const [editing,  setEditing] = useState(null);
-  const [form,     setForm]    = useState(EMPTY_G);
-  const [delGame,  setDelGame] = useState(null);
-  const [lineup,   setLineup]  = useState(null); // game object for lineup builder
+  const [games,      setGames]      = useState([]);
+  const [players,    setPlayers]    = useState([]);
+  const [open,       setOpen]       = useState(false);
+  const [editing,    setEditing]    = useState(null);
+  const [form,       setForm]       = useState(EMPTY_G);
+  const [delGame,    setDelGame]    = useState(null);
+  const [lineup,     setLineup]     = useState(null);
+  const [detailGame, setDetailGame] = useState(null); // game for RSVP detail view
+  const [gameRsvp,   setGameRsvp]   = useState([]);   // gameAttendance docs for detailGame
 
   useEffect(()=>{
     const u1=col('games').where('teamId','==',profile.teamId).onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.date?.localeCompare(a.date||''))));
     const u2=col('users').where('teamId','==',profile.teamId).onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='player'||p.role==='dual')));
     return ()=>{u1();u2();};
   },[]);
+
+  // Lade RSVP wenn detailGame sich ändert
+  useEffect(()=>{
+    if(!detailGame) return;
+    return col('gameAttendance').where('gameId','==',detailGame.id)
+      .onSnapshot(s=>setGameRsvp(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[detailGame?.id]);
 
   const openNew  = () => { setEditing(null); setForm(EMPTY_G); setOpen(true); };
   const openEdit = (g) => { setEditing(g.id); setForm({date:g.date||'',time:g.time||'15:00',opponent:g.opponent||'',location:g.location||'',home:!!g.home,scoreHome:g.scoreHome??'',scoreAway:g.scoreAway??'',notes:g.notes||''}); setOpen(true); };
@@ -1718,6 +1745,86 @@ function TrainerSpiele({profile, show}) {
         <LineupBuilder game={lineup} players={players} profile={profile} onClose={()=>setLineup(null)} show={show}/>
       )}
 
+      {/* ── SPIEL-DETAIL: RSVP + MITFAHRT ── */}
+      {detailGame && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={()=>setDetailGame(null)}>
+          <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <div className="font-bold text-base">vs. {detailGame.opponent}</div>
+                <div className="text-xs text-gray-400">{fmtDate(detailGame.date)} · {detailGame.time} Uhr{detailGame.location?' · '+detailGame.location:''}</div>
+              </div>
+              <button onClick={()=>setDetailGame(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500">✕</button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-5 space-y-5">
+              {/* Übersicht-Kacheln */}
+              {(()=>{
+                const yes=gameRsvp.filter(r=>r.status==='yes');
+                const no=gameRsvp.filter(r=>r.status==='no');
+                const maybe=gameRsvp.filter(r=>r.status==='maybe');
+                const mitfahrt=gameRsvp.filter(r=>r.mitfahrt===true);
+                return (<>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      {label:'Zusagen',  val:yes.length,    bg:'bg-green-50 border-green-200',  txt:'text-green-600'},
+                      {label:'Absagen',  val:no.length,     bg:'bg-red-50 border-red-200',      txt:'text-red-600'},
+                      {label:'Unsicher', val:maybe.length,  bg:'bg-amber-50 border-amber-200',  txt:'text-amber-500'},
+                      {label:'🚗 Mitfahrt',val:mitfahrt.length,bg:'bg-orange-50 border-orange-200',txt:'text-orange-600'},
+                    ].map(t=>(
+                      <div key={t.label} className={`border rounded-xl p-2 text-center ${t.bg}`}>
+                        <div className={`text-xl font-bold ${t.txt}`}>{t.val}</div>
+                        <div className="text-[10px] text-gray-500 font-medium">{t.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Spielerliste */}
+                  <div>
+                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Rückmeldungen</div>
+                    <div className="space-y-2">
+                      {players.map(p=>{
+                        const r=gameRsvp.find(x=>x.userId===p.id);
+                        const stCfg = {
+                          yes:   {label:'Zusage',  cls:'bg-green-100 text-green-700'},
+                          no:    {label:'Absage',  cls:'bg-red-100 text-red-600'},
+                          maybe: {label:'Unsicher',cls:'bg-amber-100 text-amber-600'},
+                        };
+                        const st = r?.status ? stCfg[r.status] : null;
+                        return (
+                          <div key={p.id} className="flex items-center gap-3 py-1.5">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+                              {p.number||initials(p.name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-medium truncate">{p.name}</div>
+                            </div>
+                            {r?.mitfahrt===true && <span className="text-[10px] bg-orange-100 text-orange-600 font-semibold px-1.5 py-0.5 rounded-full">🚗 Mitfahrt</span>}
+                            {st ? <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span>
+                                : <span className="text-[10px] text-gray-300">—</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Mitfahrt-Zusammenfassung */}
+                  {mitfahrt.length>0 && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                      <div className="text-xs font-semibold text-orange-700 mb-2">🚗 Mitfahrgelegenheit benötigt ({mitfahrt.length})</div>
+                      <div className="space-y-1">
+                        {mitfahrt.map(r=>(
+                          <div key={r.id} className="text-sm text-orange-800 font-medium">{r.playerName}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>);
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       {open && (
         <Modal title={editing?'Spiel bearbeiten':'Spiel eintragen'} onClose={()=>{setOpen(false);setEditing(null);}}>
           <form onSubmit={save}>
@@ -1751,30 +1858,28 @@ function TrainerSpiele({profile, show}) {
       ) : (
         <div className="space-y-2">
           {upcoming.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
-            {upcoming.map(g=><GameCard key={g.id} g={g} badge={badge} onEdit={openEdit} onDelete={()=>setDelGame(g.id)} onLineup={()=>setLineup(g)}/>)}</>}
+            {upcoming.map(g=><GameCard key={g.id} g={g} badge={badge} onEdit={openEdit} onDelete={()=>setDelGame(g.id)} onLineup={()=>setLineup(g)} onDetail={()=>setDetailGame(g)}/>)}</>}
           {past.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
-            {past.map(g=><GameCard key={g.id} g={g} badge={badge} faded onEdit={openEdit} onDelete={()=>setDelGame(g.id)} onLineup={()=>setLineup(g)}/>)}</>}
+            {past.map(g=><GameCard key={g.id} g={g} badge={badge} faded onEdit={openEdit} onDelete={()=>setDelGame(g.id)} onLineup={()=>setLineup(g)} onDetail={()=>setDetailGame(g)}/>)}</>}
         </div>
       )}
     </div>
   );
 }
 
-const GameCard = ({g, badge, faded=false, onEdit, onDelete, onLineup}) => (
-  <div className={`border rounded-xl p-4 ${faded?'bg-gray-50 border-gray-200 opacity-80':'bg-white border-gray-200'}`}>
-    <div className="flex items-start justify-between gap-2">
-      <div className="min-w-0">
-        <div className="text-sm font-semibold">vs. {g.opponent}</div>
-        <div className="text-xs text-gray-400 mt-0.5">{fmtDate(g.date)} · {g.time}{g.location?' · '+g.location:''} · {g.home?'🏠 Heim':'✈️ Auswärts'}</div>
-        {g.notes&&<p className="text-xs text-gray-500 mt-1">{g.notes}</p>}
+const GameCard = ({g, badge, faded=false, onEdit, onDelete, onLineup, onDetail}) => (
+  <div className={`border rounded-xl overflow-hidden ${faded?'bg-gray-50 border-gray-200 opacity-80':'bg-white border-gray-200'}`}>
+    <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={onDetail}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">vs. {g.opponent}</div>
+          <div className="text-xs text-gray-400 mt-0.5">{fmtDate(g.date)} · {g.time}{g.location?' · '+g.location:''} · {g.home?'🏠 Heim':'✈️ Auswärts'}</div>
+          {g.notes&&<p className="text-xs text-gray-500 mt-1">{g.notes}</p>}
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {badge(g)}
+        </div>
       </div>
-      <div className="flex items-center gap-1.5 flex-shrink-0">
-        {badge(g)}
-        <button onClick={()=>onLineup(g)} title="Aufstellung" className="text-sm px-2 py-1 border border-gray-200 rounded-lg hover:border-red-400 hover:bg-red-50 transition-colors">🟢</button>
-        <button onClick={()=>onEdit(g)} className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50">✏️</button>
-        <button onClick={onDelete} className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50">🗑</button>
-      </div>
-    </div>
     {g.lineup?.length>0 && (
       <div className="mt-2 flex gap-1 flex-wrap">
         {g.lineup.map((p,i)=>(
@@ -1782,6 +1887,12 @@ const GameCard = ({g, badge, faded=false, onEdit, onDelete, onLineup}) => (
         ))}
       </div>
     )}
+    </div>
+    <div className="flex items-center gap-1.5 px-3 pb-3 pt-0" onClick={e=>e.stopPropagation()}>
+      <button onClick={()=>onLineup(g)} title="Aufstellung" className="text-sm px-2 py-1 border border-gray-200 rounded-lg hover:border-red-400 hover:bg-red-50 transition-colors">🟢 Aufstellung</button>
+      <button onClick={()=>onEdit(g)} className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50">✏️</button>
+      <button onClick={onDelete} className="text-xs text-gray-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50">🗑</button>
+    </div>
   </div>
 );
 
@@ -2209,6 +2320,113 @@ function PlayerTraining({profile}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  SPIELER — SPIELTAGE (RSVP + MITFAHRT)
+// ═══════════════════════════════════════════════════════════════════
+function PlayerSpiele({profile}) {
+  const [games,  setGames]  = useState([]);
+  const [myRsvp, setMyRsvp] = useState({}); // gameId → {status, mitfahrt}
+  const [saving, setSaving] = useState({});
+
+  useEffect(()=>{
+    const u1 = col('games').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date?.localeCompare(b.date||''))));
+    const u2 = col('gameAttendance').where('teamId','==',profile.teamId).where('userId','==',profile.id)
+      .onSnapshot(s=>{
+        const map={};
+        s.docs.forEach(d=>{const r=d.data(); map[r.gameId]={status:r.status,mitfahrt:r.mitfahrt,docId:d.id};});
+        setMyRsvp(map);
+      });
+    return ()=>{u1();u2();};
+  },[]);
+
+  const saveRsvp = async (gameId, patch) => {
+    setSaving(v=>({...v,[gameId]:true}));
+    const existing = myRsvp[gameId];
+    const data = {gameId,userId:profile.id,playerName:profile.name,teamId:profile.teamId,updatedAt:ts(),...(existing||{}), ...patch};
+    delete data.docId;
+    if(existing?.docId) await col('gameAttendance').doc(existing.docId).update(patch);
+    else                await col('gameAttendance').add(data);
+    setSaving(v=>({...v,[gameId]:false}));
+  };
+
+  const upcoming = games.filter(g=>g.date>=todayStr());
+  const past     = games.filter(g=>g.date<todayStr());
+
+  const GameRsvpCard = ({g}) => {
+    const rsvp = myRsvp[g.id]||{};
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div>
+            <div className="text-sm font-semibold">vs. {g.opponent}</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {fmtDate(g.date)} · {g.time} Uhr{g.location?' · '+g.location:''} · {g.home?'🏠 Heim':'✈️ Auswärts'}
+            </div>
+          </div>
+        </div>
+        {/* RSVP */}
+        <div className="mb-3">
+          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Deine Rückmeldung</div>
+          <div className="flex gap-2">
+            {[
+              {st:'yes',   icon:'✓', label:'Zusagen', on:'bg-green-600 text-white', off:'bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-700'},
+              {st:'no',    icon:'✕', label:'Absagen',  on:'bg-red-600 text-white',   off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600'},
+              {st:'maybe', icon:'?', label:'Unsicher', on:'bg-amber-500 text-white', off:'bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-600'},
+            ].map(({st,icon,label,on,off})=>(
+              <button key={st} disabled={saving[g.id]} onClick={()=>saveRsvp(g.id,{status:st})}
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-xl font-bold transition-all ${rsvp.status===st?on:off}`}>
+                <span className="text-lg leading-none">{icon}</span>
+                <span className="text-[10px] font-medium">{label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Mitfahrgelegenheit */}
+        <div className="border-t border-gray-100 pt-3">
+          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">🚗 Mitfahrgelegenheit</div>
+          <div className="flex gap-2">
+            {[
+              {v:false, label:'Nicht nötig', on:'bg-blue-600 text-white', off:'bg-gray-100 text-gray-500 hover:bg-blue-50 hover:text-blue-600'},
+              {v:true,  label:'Ich benötige eine', on:'bg-orange-500 text-white', off:'bg-gray-100 text-gray-500 hover:bg-orange-50 hover:text-orange-600'},
+            ].map(({v,label,on,off})=>(
+              <button key={String(v)} disabled={saving[g.id]} onClick={()=>saveRsvp(g.id,{mitfahrt:v})}
+                className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-all ${rsvp.mitfahrt===v?on:off}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-4">Spieltage</h1>
+      {games.length===0 ? (
+        <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">🏆</div><p className="text-sm">Noch keine Spiele eingetragen.</p></div>
+      ) : (
+        <div className="space-y-2">
+          {upcoming.length>0&&<>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
+            {upcoming.map(g=><GameRsvpCard key={g.id} g={g}/>)}
+          </>}
+          {past.length>0&&<>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
+            {past.map(g=>(
+              <div key={g.id} className="bg-gray-50 border border-gray-200 rounded-xl p-3 opacity-60 text-sm flex justify-between">
+                <span>vs. {g.opponent}</span>
+                <span className="text-xs text-gray-400">{fmtDate(g.date)}</span>
+              </div>
+            ))}
+          </>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  SPIELER — WELLNESS
 // ═══════════════════════════════════════════════════════════════════
 function PlayerWellness({profile}) {
@@ -2370,6 +2588,7 @@ function PlayerApp({profile}) {
 
   const nav = [{section:'', items:[
     {id:'training',icon:'📅',label:'Training'},
+    {id:'spiele',  icon:'🏆',label:'Spieltage'},
     {id:'wellness',icon:'💪',label:'Wellness'},
     {id:'stats',   icon:'📊',label:'Stats'},
     {id:'chat',    icon:'💬',label:'Chat'},
@@ -2378,6 +2597,7 @@ function PlayerApp({profile}) {
 
   const content = {
     training: <PlayerTraining profile={profile}/>,
+    spiele:   <PlayerSpiele profile={profile}/>,
     wellness: <PlayerWellness profile={profile}/>,
     stats:    <PlayerStats profile={profile}/>,
     chat:     <ChatPage profile={profile} accent="red"/>,
