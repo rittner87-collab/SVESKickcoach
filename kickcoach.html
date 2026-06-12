@@ -3957,23 +3957,48 @@ function AdminPlayerDetail({player, onClose, show}) {
 // ═══════════════════════════════════════════════════════════════════
 //  VEREINSKALENDER (alle Rollen — nur Vorstand kann eintragen)
 // ═══════════════════════════════════════════════════════════════════
-function Vereinskalender({profile, canEdit}) {
-  const [events,  setEvents]  = useState([]);
-  const [month,   setMonth]   = useState(new Date().toISOString().slice(0,7));
-  const [form,    setForm]    = useState(null);
-  const [delId,   setDelId]   = useState(null);
-  const [saving,  setSaving]  = useState(false);
-  const EMPTY = {titel:'',datum:'',uhrzeit:'',ort:'',beschreibung:''};
-  const CATS = ['Spiel','Training','Vereinsfeier','Versammlung','Sonstiges'];
-  const CAT_COLOR = {Spiel:'#DC2626',Training:'#2563EB',Vereinsfeier:'#7C3AED',Versammlung:'#D97706',Sonstiges:'#6B7280'};
+// ── Kalender-Hilfsfunktionen ──────────────────────────────────────
+const getMonday = (d) => {
+  const dt = new Date(d);
+  const day = dt.getDay();
+  dt.setDate(dt.getDate() - (day===0 ? 6 : day-1));
+  return dt.toISOString().slice(0,10);
+};
+const addDays = (s,n) => { const d=new Date(s); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+const CAT_COLOR = {Spiel:'#DC2626',Training:'#2563EB',Vereinsfeier:'#7C3AED',Versammlung:'#D97706',Sonstiges:'#6B7280'};
+const TEAM_COLORS = ['#DC2626','#2563EB','#16A34A','#D97706','#7C3AED','#0891B2','#DB2777','#65A30D'];
+const teamColor = (name='') => TEAM_COLORS[Math.abs([...name].reduce((a,c)=>a+c.charCodeAt(0),0)) % TEAM_COLORS.length];
 
+function Vereinskalender({profile, canEdit}) {
+  const [events,    setEvents]    = useState([]);
+  const [weekStart, setWeekStart] = useState(getMonday(new Date()));
+  const [form,      setForm]      = useState(null);
+  const [detail,    setDetail]    = useState(null);
+  const [saving,    setSaving]    = useState(false);
+  const CATS = ['Spiel','Training','Vereinsfeier','Versammlung','Sonstiges'];
+  const EMPTY = {titel:'',datum:'',uhrzeit:'',ort:'',beschreibung:'',kategorie:'Sonstiges'};
+
+  // Load 3 months around current week for smooth navigation
   useEffect(()=>{
-    const [y,m]=month.split('-');
-    const start=`${y}-${m}-01`;
-    const end=`${y}-${String(Number(m)%12+1).padStart(2,'0')}-01`;
-    return col('vereinskalender').where('datum','>=',start).where('datum','<',end)
-      .onSnapshot(s=>setEvents(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.datum.localeCompare(b.datum)||(a.uhrzeit||'').localeCompare(b.uhrzeit||''))));
-  },[month]);
+    const start = addDays(weekStart,-30);
+    const end   = addDays(weekStart, 60);
+    return col('vereinskalender').where('datum','>=',start).where('datum','<=',end)
+      .onSnapshot(s=>setEvents(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[weekStart]);
+
+  const weekDates = Array.from({length:7},(_,i)=>addDays(weekStart,i));
+  const today = new Date().toISOString().slice(0,10);
+  const eventsForDay = (date) => events.filter(e=>e.datum===date).sort((a,b)=>(a.uhrzeit||'').localeCompare(b.uhrzeit||''));
+
+  const prevWeek = ()=>setWeekStart(addDays(weekStart,-7));
+  const nextWeek = ()=>setWeekStart(addDays(weekStart, 7));
+  const goToday  = ()=>setWeekStart(getMonday(new Date()));
+
+  const weekLabel = ()=>{
+    const s = new Date(weekStart);
+    const e = new Date(addDays(weekStart,6));
+    return `${s.getDate()}.${s.getMonth()+1} – ${e.getDate()}.${e.getMonth()+1}.${e.getFullYear()}`;
+  };
 
   const save = async () => {
     if(!form.titel?.trim()||!form.datum) return;
@@ -3987,22 +4012,12 @@ function Vereinskalender({profile, canEdit}) {
     setSaving(false);
   };
 
-  const doDelete = async () => { await col('vereinskalender').doc(delId).delete(); setDelId(null); };
-  const prev = ()=>{ const d=new Date(month+'-01'); d.setMonth(d.getMonth()-1); setMonth(d.toISOString().slice(0,7)); };
-  const next = ()=>{ const d=new Date(month+'-01'); d.setMonth(d.getMonth()+1); setMonth(d.toISOString().slice(0,7)); };
-  const monthLabel = new Date(month+'-01').toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+  const doDelete = async (id) => { await col('vereinskalender').doc(id).delete(); setDetail(null); };
+
+  const DAY_LABELS = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 
   return (
     <div className="p-4">
-      {delId && (
-        <Modal title="Termin löschen?" onClose={()=>setDelId(null)}>
-          <p className="text-sm text-gray-600 mb-4">Diesen Termin wirklich löschen?</p>
-          <div className="flex gap-2">
-            <Btn variant="secondary" className="flex-1" onClick={()=>setDelId(null)}>Abbrechen</Btn>
-            <button onClick={doDelete} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button>
-          </div>
-        </Modal>
-      )}
       {form && canEdit && (
         <Modal title={form.id?'Termin bearbeiten':'Neuer Termin'} onClose={()=>setForm(null)}>
           <Inp label="Titel *" value={form.titel||''} onChange={e=>setForm(p=>({...p,titel:e.target.value}))}/>
@@ -4010,14 +4025,16 @@ function Vereinskalender({profile, canEdit}) {
             <Inp label="Datum *" type="date" value={form.datum||''} onChange={e=>setForm(p=>({...p,datum:e.target.value}))}/>
             <Inp label="Uhrzeit" type="time" value={form.uhrzeit||''} onChange={e=>setForm(p=>({...p,uhrzeit:e.target.value}))}/>
           </div>
-          <Inp label="Ort" value={form.ort||''} onChange={e=>setForm(p=>({...p,ort:e.target.value}))} placeholder="z.B. Sportplatz, Vereinsheim"/>
+          <Inp label="Ort" value={form.ort||''} onChange={e=>setForm(p=>({...p,ort:e.target.value}))} placeholder="z.B. Sportplatz"/>
           <div className="mb-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Kategorie</label>
             <div className="flex flex-wrap gap-1.5">
               {CATS.map(c=>{
+                const col2=CAT_COLOR[c]||CAT_COLOR.Sonstiges;
                 const sel=form.kategorie===c;
                 return <button key={c} type="button" onClick={()=>setForm(p=>({...p,kategorie:c}))}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all ${sel?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{c}</button>;
+                  style={sel?{borderColor:col2,background:col2+'18',color:col2}:{}}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all ${sel?'':'border-gray-200 text-gray-500'}`}>{c}</button>;
               })}
             </div>
           </div>
@@ -4033,54 +4050,88 @@ function Vereinskalender({profile, canEdit}) {
         </Modal>
       )}
 
-      <div className="flex items-center justify-between mb-4">
+      {detail && (
+        <Modal title={detail.titel} onClose={()=>setDetail(null)}>
+          <div className="space-y-2 text-sm">
+            {detail.kategorie && <div className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold" style={{background:(CAT_COLOR[detail.kategorie]||'#6B7280')+'22',color:CAT_COLOR[detail.kategorie]||'#6B7280'}}>{detail.kategorie}</div>}
+            <div className="text-gray-600">📅 {fmtDate(detail.datum)}{detail.uhrzeit&&` · ${detail.uhrzeit} Uhr`}</div>
+            {detail.ort && <div className="text-gray-600">📍 {detail.ort}</div>}
+            {detail.beschreibung && <div className="text-gray-600">{detail.beschreibung}</div>}
+            <div className="text-xs text-gray-400">Erstellt von {detail.createdBy}</div>
+          </div>
+          {canEdit && (
+            <div className="flex gap-2 mt-4">
+              <Btn variant="secondary" className="flex-1" onClick={()=>{setForm({...detail});setDetail(null);}}>Bearbeiten</Btn>
+              <button onClick={()=>doDelete(detail.id)} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button>
+            </div>
+          )}
+        </Modal>
+      )}
+
+      <div className="flex items-center justify-between mb-3">
         <div>
           <h1 className="text-lg font-semibold">Vereinskalender</h1>
-          <p className="text-xs text-gray-400">{events.length} Termin{events.length!==1?'e':''} diesen Monat</p>
+          <p className="text-xs text-gray-400">{weekLabel()}</p>
         </div>
         {canEdit && (
-          <button onClick={()=>setForm({...EMPTY})} className="px-3 py-2 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 transition-colors">+ Termin</button>
+          <button onClick={()=>setForm({...EMPTY,datum:today})} className="px-3 py-2 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">+ Termin</button>
         )}
       </div>
 
-      <div className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-xl mb-3">
-        <button onClick={prev} className="p-1 rounded hover:bg-gray-100 text-gray-500">◀</button>
-        <span className="text-sm font-semibold">{monthLabel}</span>
-        <button onClick={next} className="p-1 rounded hover:bg-gray-100 text-gray-500">▶</button>
+      {/* Wochennavigation */}
+      <div className="flex items-center gap-2 mb-3">
+        <button onClick={prevWeek} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 text-sm">◀</button>
+        <button onClick={goToday} className="flex-1 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-xs font-semibold text-gray-600">Heute</button>
+        <button onClick={nextWeek} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 text-sm">▶</button>
       </div>
 
-      {events.length===0 ? (
-        <div className="text-center text-gray-400 py-10 text-sm">Keine Termine in diesem Monat.</div>
-      ) : (
-        <div className="space-y-2">
-          {events.map(ev=>{
-            const color = CAT_COLOR[ev.kategorie]||CAT_COLOR.Sonstiges;
+      {/* Wochengitter — horizontal scrollbar */}
+      <div className="overflow-x-auto pb-2 -mx-4 px-4">
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7, 110px)',gap:'6px',minWidth:'770px'}}>
+          {weekDates.map((date,i)=>{
+            const dayEvs = eventsForDay(date);
+            const isToday = date===today;
+            const d = new Date(date);
             return (
-              <div key={ev.id} className="bg-white border border-gray-200 rounded-xl p-4 flex gap-3">
-                <div className="w-1 rounded-full flex-shrink-0 self-stretch" style={{background:color}}/>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-semibold text-sm">{ev.titel}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        📅 {fmtDate(ev.datum)}{ev.uhrzeit&&` · ${ev.uhrzeit} Uhr`}{ev.ort&&` · 📍 ${ev.ort}`}
-                      </div>
-                      {ev.kategorie && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{background:color+'22',color}}>{ev.kategorie}</span>}
-                      {ev.beschreibung && <div className="text-xs text-gray-500 mt-1">{ev.beschreibung}</div>}
-                    </div>
-                    {canEdit && (
-                      <div className="flex gap-1 flex-shrink-0">
-                        <button onClick={()=>setForm({...ev})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
-                        <button onClick={()=>setDelId(ev.id)} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
-                      </div>
-                    )}
-                  </div>
+              <div key={date} className={`rounded-xl border overflow-hidden ${isToday?'border-purple-400':'border-gray-200'}`}>
+                {/* Tageskopf */}
+                <div className={`px-2 py-1.5 text-center ${isToday?'bg-purple-600':'bg-gray-50'}`}>
+                  <div className={`text-[10px] font-semibold ${isToday?'text-white':'text-gray-500'}`}>{DAY_LABELS[i]}</div>
+                  <div className={`text-sm font-bold ${isToday?'text-white':'text-gray-800'}`}>{d.getDate()}</div>
+                  <div className={`text-[9px] ${isToday?'text-purple-200':'text-gray-400'}`}>{d.toLocaleDateString('de-DE',{month:'short'})}</div>
+                </div>
+                {/* Events */}
+                <div className="bg-white p-1 min-h-[80px] space-y-1">
+                  {dayEvs.map(ev=>{
+                    const c = CAT_COLOR[ev.kategorie]||CAT_COLOR.Sonstiges;
+                    return (
+                      <button key={ev.id} onClick={()=>setDetail(ev)}
+                        className="w-full text-left px-1.5 py-1 rounded text-[10px] font-medium leading-tight truncate"
+                        style={{background:c+'18',color:c,border:`1px solid ${c}44`}}>
+                        {ev.uhrzeit&&<span className="opacity-70">{ev.uhrzeit} </span>}{ev.titel}
+                      </button>
+                    );
+                  })}
+                  {canEdit && (
+                    <button onClick={()=>setForm({...EMPTY,datum:date})}
+                      className="w-full text-center text-gray-300 hover:text-purple-400 text-lg leading-none py-0.5 transition-colors">+</button>
+                  )}
                 </div>
               </div>
             );
           })}
         </div>
-      )}
+      </div>
+
+      {/* Legende */}
+      <div className="flex flex-wrap gap-2 mt-3">
+        {Object.entries(CAT_COLOR).map(([k,c])=>(
+          <div key={k} className="flex items-center gap-1">
+            <div className="w-2.5 h-2.5 rounded-full" style={{background:c}}/>
+            <span className="text-[10px] text-gray-500">{k}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -4090,17 +4141,50 @@ function Vereinskalender({profile, canEdit}) {
 // ═══════════════════════════════════════════════════════════════════
 const WOCHENTAGE = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 
+// ── Wiederverwendbares Wochengitter für Platz/Kabine ─────────────
+function WochenGrid({data, onEdit, onDelete, accent='purple', emptyText='Noch keine Einträge.'}) {
+  // data: [{id, tag, label, sublabel, color}]
+  return (
+    <div className="overflow-x-auto -mx-4 px-4 pb-2">
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'4px',minWidth:'490px'}}>
+        {WOCHENTAGE.map(tag=>{
+          const entries = data.filter(d=>d.tag===tag);
+          return (
+            <div key={tag} className="rounded-xl border border-gray-200 overflow-hidden">
+              <div className={`py-1.5 text-center text-[10px] font-bold uppercase tracking-wider ${tag==='Sa'||tag==='So'?'bg-amber-50 text-amber-600':'bg-gray-50 text-gray-500'}`}>{tag}</div>
+              <div className="bg-white p-1 min-h-[60px] space-y-1">
+                {entries.map(e=>(
+                  <div key={e.id} className="rounded p-1 text-[10px] leading-tight" style={{background:e.color+'18',borderLeft:`3px solid ${e.color}`}}>
+                    <div className="font-semibold truncate" style={{color:e.color}}>{e.label}</div>
+                    {e.sublabel&&<div className="text-gray-500 truncate">{e.sublabel}</div>}
+                    {(onEdit||onDelete) && (
+                      <div className="flex gap-0.5 mt-0.5">
+                        {onEdit&&<button onClick={()=>onEdit(e)} className="text-gray-400 hover:text-purple-500">✏️</button>}
+                        {onDelete&&<button onClick={()=>onDelete(e.id)} className="text-gray-400 hover:text-red-500">🗑</button>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {data.length===0 && <div className="text-center text-gray-400 py-8 text-sm">{emptyText}</div>}
+    </div>
+  );
+}
+
 function AdminPlatzverwaltung({profile, show}) {
-  const [tab,         setTab]         = useState('platz'); // 'platz'|'kabine'|'maengel'
-  const [teams,       setTeams]       = useState([]);
-  const [platzbel,    setPlatzbel]    = useState([]);
-  const [kabinenbel,  setKabinenbel]  = useState([]);
-  const [maengel,     setMaengel]     = useState([]);
-  const [form,        setForm]        = useState(null);
-  const [kabiForm,    setKabiForm]    = useState(null);
-  const [delPId,      setDelPId]      = useState(null);
-  const [delKId,      setDelKId]      = useState(null);
-  const [saving,      setSaving]      = useState(false);
+  const [tab,        setTab]        = useState('platz');
+  const [teams,      setTeams]      = useState([]);
+  const [platzbel,   setPlatzbel]   = useState([]);
+  const [kabinenbel, setKabinenbel] = useState([]);
+  const [maengel,    setMaengel]    = useState([]);
+  const [form,       setForm]       = useState(null);
+  const [kabiForm,   setKabiForm]   = useState(null);
+  const [delId,      setDelId]      = useState(null);
+  const [saving,     setSaving]     = useState(false);
 
   useEffect(()=>{
     const u1=col('teams').onSnapshot(s=>setTeams(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.name.localeCompare(b.name))));
@@ -4110,29 +4194,49 @@ function AdminPlatzverwaltung({profile, show}) {
     return ()=>{u1();u2();u3();u4();};
   },[]);
 
-  const teamName = (id) => teams.find(t=>t.id===id)?.name||id;
+  const tName = (id) => teams.find(t=>t.id===id)?.name||id;
+  const toggleTag = (arr,tag) => arr.includes(tag)?arr.filter(x=>x!==tag):[...arr,tag];
 
-  // Platzbelegung
+  // Platzbelegung — multiple Tage → je ein Dokument
   const savePlatz = async () => {
-    if(!form.teamId||!form.tag||!form.platz) return;
+    if(!form.teamId||!(form.tage||[]).length||!form.platz) return;
     setSaving(true);
     try {
-      const data={teamId:form.teamId,teamName:teamName(form.teamId),tag:form.tag,platz:form.platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||''};
-      if(form.id) await col('platzbelegung').doc(form.id).update(data);
-      else        await col('platzbelegung').add({...data,createdAt:ts()});
+      if(form.id){
+        // Edit: update single existing entry
+        await col('platzbelegung').doc(form.id).update({
+          teamId:form.teamId,teamName:tName(form.teamId),tag:form.tage[0],
+          platz:form.platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||''
+        });
+      } else {
+        // Create: one doc per selected day
+        await Promise.all((form.tage).map(tag=>
+          col('platzbelegung').add({teamId:form.teamId,teamName:tName(form.teamId),tag,platz:form.platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||'',createdAt:ts()})
+        ));
+      }
       show('Gespeichert ✅'); setForm(null);
     } catch(e){show(e.message,'error');}
     setSaving(false);
   };
 
-  // Kabinenbelegung
+  // Kabinenbelegung — multiple Tage (nur bei fest)
   const saveKabine = async () => {
     if(!kabiForm.teamId||!kabiForm.kabine) return;
     setSaving(true);
     try {
-      const data={teamId:kabiForm.teamId,teamName:teamName(kabiForm.teamId),kabine:kabiForm.kabine,typ:kabiForm.typ||'fest',tag:kabiForm.tag||'',datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||''};
-      if(kabiForm.id) await col('kabinenbelegung').doc(kabiForm.id).update(data);
-      else            await col('kabinenbelegung').add({...data,createdAt:ts()});
+      if(kabiForm.id){
+        const tag = kabiForm.typ==='fest'?(kabiForm.tage||[])[0]||'':kabiForm.tag||'';
+        await col('kabinenbelegung').doc(kabiForm.id).update({
+          teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),kabine:kabiForm.kabine,
+          typ:kabiForm.typ||'fest',tag,datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||''
+        });
+      } else if(kabiForm.typ==='fest'){
+        await Promise.all((kabiForm.tage||[]).map(tag=>
+          col('kabinenbelegung').add({teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),kabine:kabiForm.kabine,typ:'fest',tag,datum:'',uhrzeit:kabiForm.uhrzeit||'',createdAt:ts()})
+        ));
+      } else {
+        await col('kabinenbelegung').add({teamId:kabiForm.teamId,teamName:tName(kabiForm.teamId),kabine:kabiForm.kabine,typ:'flexibel',tag:'',datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||'',createdAt:ts()});
+      }
       show('Gespeichert ✅'); setKabiForm(null);
     } catch(e){show(e.message,'error');}
     setSaving(false);
@@ -4143,21 +4247,37 @@ function AdminPlatzverwaltung({profile, show}) {
     show('Status aktualisiert ✅');
   };
 
-  const TAB_BTN = (id,label) => (
-    <button key={id} onClick={()=>setTab(id)}
-      className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-purple-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
-      {label}
-    </button>
+  const doDelConfirm = async () => {
+    const [coll,id]=delId;
+    await col(coll).doc(id).delete();
+    setDelId(null);
+  };
+
+  const TabBtn = ({id,label}) => (
+    <button onClick={()=>setTab(id)} className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-purple-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{label}</button>
   );
+
+  // Grid data
+  const platzGrid = platzbel.map(e=>({...e,label:e.teamName,sublabel:`📍${e.platz}${e.uhrzeitVon?` ${e.uhrzeitVon}-${e.uhrzeitBis}`:''}`,color:teamColor(e.teamName)}));
+  const kabiGrid  = kabinenbel.filter(k=>k.typ==='fest').map(e=>({...e,label:e.teamName,sublabel:`🚿${e.kabine}${e.uhrzeit?` ${e.uhrzeit}`:''}`,color:teamColor(e.teamName)}));
 
   return (
     <div className="p-4">
+      {delId && (
+        <Modal title="Eintrag löschen?" onClose={()=>setDelId(null)}>
+          <div className="flex gap-2 mt-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelId(null)}>Abbrechen</Btn>
+            <button onClick={doDelConfirm} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button>
+          </div>
+        </Modal>
+      )}
+
       <h1 className="text-lg font-semibold mb-1">Platz- & Objektverwaltung</h1>
-      <p className="text-xs text-gray-400 mb-4">Belegungspläne und Mängelmeldungen</p>
+      <p className="text-xs text-gray-400 mb-3">Belegungspläne und Mängelmeldungen</p>
       <div className="flex gap-1.5 mb-4">
-        {TAB_BTN('platz','⚽ Platz')}
-        {TAB_BTN('kabine','🚿 Kabinen')}
-        {TAB_BTN('maengel','🔧 Mängel')}
+        <TabBtn id="platz" label="⚽ Platz"/>
+        <TabBtn id="kabine" label="🚿 Kabinen"/>
+        <TabBtn id="maengel" label="🔧 Mängel"/>
       </div>
 
       {/* ── PLATZBELEGUNG ── */}
@@ -4174,12 +4294,14 @@ function AdminPlatzverwaltung({profile, show}) {
                 </select>
               </div>
               <div className="mb-2">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Wochentag</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">{form.id?'Wochentag':'Wochentage (Mehrfach möglich)'}</label>
                 <div className="flex gap-1 flex-wrap">
-                  {WOCHENTAGE.map(t=>(
-                    <button key={t} type="button" onClick={()=>setForm(p=>({...p,tag:t}))}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${form.tag===t?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{t}</button>
-                  ))}
+                  {WOCHENTAGE.map(t=>{
+                    const sel=(form.tage||[]).includes(t);
+                    return <button key={t} type="button"
+                      onClick={()=>setForm(p=>({...p,tage:toggleTag(p.tage||[],t)}))}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${sel?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{t}</button>;
+                  })}
                 </div>
               </div>
               <Inp label="Platz / Feld" value={form.platz||''} onChange={e=>setForm(p=>({...p,platz:e.target.value}))} placeholder="z.B. Hauptplatz, Nebenplatz"/>
@@ -4189,39 +4311,18 @@ function AdminPlatzverwaltung({profile, show}) {
               </div>
               <div className="flex gap-2 mt-3">
                 <Btn variant="secondary" className="flex-1" onClick={()=>setForm(null)}>Abbrechen</Btn>
-                <Btn className="flex-1" onClick={savePlatz} disabled={!form.teamId||!form.tag||!form.platz||saving}>{saving?'…':'Speichern'}</Btn>
+                <Btn className="flex-1" onClick={savePlatz} disabled={!form.teamId||!(form.tage||[]).length||!form.platz||saving}>{saving?'…':'Speichern'}</Btn>
               </div>
             </Modal>
           )}
-          <div className="flex justify-between items-center mb-3">
-            <div className="text-sm font-semibold">Platzbelegungsplan (Woche)</div>
-            <button onClick={()=>setForm({teamId:'',tag:'',platz:'',uhrzeitVon:'',uhrzeitBis:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
+          <div className="flex justify-between items-center mb-2">
+            <div className="text-sm font-semibold">Platzbelegungsplan</div>
+            <button onClick={()=>setForm({teamId:'',tage:[],platz:'',uhrzeitVon:'',uhrzeitBis:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
           </div>
-          {WOCHENTAGE.map(tag=>{
-            const entries = platzbel.filter(p=>p.tag===tag);
-            if(!entries.length) return null;
-            return (
-              <div key={tag} className="mb-3">
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{tag}</div>
-                <div className="space-y-1.5">
-                  {entries.map(e=>(
-                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium">{e.teamName}</div>
-                        <div className="text-xs text-gray-500">📍 {e.platz}{e.uhrzeitVon&&` · ${e.uhrzeitVon}–${e.uhrzeitBis} Uhr`}</div>
-                      </div>
-                      <div className="flex gap-1">
-                        <button onClick={()=>setForm({...e})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
-                        <button onClick={()=>setDelPId(e.id)} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {platzbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch keine Einträge.</div>}
-          {delPId && <Modal title="Löschen?" onClose={()=>setDelPId(null)}><div className="flex gap-2 mt-2"><Btn variant="secondary" className="flex-1" onClick={()=>setDelPId(null)}>Abbrechen</Btn><button onClick={async()=>{await col('platzbelegung').doc(delPId).delete();setDelPId(null);}} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button></div></Modal>}
+          <WochenGrid data={platzGrid}
+            onEdit={e=>setForm({...e,tage:[e.tag]})}
+            onDelete={id=>setDelId(['platzbelegung',id])}
+            emptyText="Noch keine Platzbelegung eingetragen."/>
         </>
       )}
 
@@ -4238,7 +4339,7 @@ function AdminPlatzverwaltung({profile, show}) {
                   {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </div>
-              <Inp label="Kabine / Umkleide" value={kabiForm.kabine||''} onChange={e=>setKabiForm(p=>({...p,kabine:e.target.value}))} placeholder="z.B. Kabine 1, Kabine A"/>
+              <Inp label="Kabine / Umkleide" value={kabiForm.kabine||''} onChange={e=>setKabiForm(p=>({...p,kabine:e.target.value}))} placeholder="z.B. Kabine 1"/>
               <div className="mb-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Art</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -4250,12 +4351,15 @@ function AdminPlatzverwaltung({profile, show}) {
               </div>
               {kabiForm.typ==='fest' ? (
                 <div className="mb-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Wochentag</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{kabiForm.id?'Wochentag':'Wochentage (Mehrfach möglich)'}</label>
                   <div className="flex gap-1 flex-wrap">
-                    {WOCHENTAGE.map(t=>(
-                      <button key={t} type="button" onClick={()=>setKabiForm(p=>({...p,tag:t}))}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${kabiForm.tag===t?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{t}</button>
-                    ))}
+                    {WOCHENTAGE.map(t=>{
+                      const tage=kabiForm.tage||[];
+                      const sel=tage.includes(t);
+                      return <button key={t} type="button"
+                        onClick={()=>setKabiForm(p=>({...p,tage:toggleTag(p.tage||[],t)}))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${sel?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{t}</button>;
+                    })}
                   </div>
                 </div>
               ) : (
@@ -4268,35 +4372,36 @@ function AdminPlatzverwaltung({profile, show}) {
               </div>
             </Modal>
           )}
-          <div className="flex justify-between items-center mb-3">
+          <div className="flex justify-between items-center mb-2">
             <div className="text-sm font-semibold">Kabinenbelegungsplan</div>
-            <button onClick={()=>setKabiForm({teamId:'',kabine:'',typ:'fest',tag:'',datum:'',uhrzeit:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
+            <button onClick={()=>setKabiForm({teamId:'',kabine:'',typ:'fest',tage:[],datum:'',uhrzeit:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
           </div>
-          {['fest','flexibel'].map(typ=>{
-            const entries = kabinenbel.filter(k=>k.typ===typ);
-            if(!entries.length) return null;
-            return (
-              <div key={typ} className="mb-4">
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{typ==='fest'?'Fest (Wochentage)':'Flexibel (Wochenende)'}</div>
-                <div className="space-y-1.5">
-                  {entries.map(e=>(
-                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
-                        <div className="text-xs text-gray-500">{typ==='fest'?(e.tag||'—'):(e.datum?fmtDate(e.datum):'—')}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
-                      </div>
-                      <div className="flex gap-1">
-                        <button onClick={()=>setKabiForm({...e})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
-                        <button onClick={()=>setDelKId(e.id)} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
-                      </div>
+          {/* Fest-Wochengitter */}
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Fest (Wochentage)</div>
+          <WochenGrid data={kabiGrid}
+            onEdit={e=>setKabiForm({...e,tage:[e.tag]})}
+            onDelete={id=>setDelId(['kabinenbelegung',id])}
+            emptyText="Noch keine feste Kabinenbelegung."/>
+          {/* Flexibel-Liste */}
+          {kabinenbel.filter(k=>k.typ==='flexibel').length>0 && (
+            <div className="mt-4">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Flexibel (Wochenende)</div>
+              <div className="space-y-1.5">
+                {kabinenbel.filter(k=>k.typ==='flexibel').sort((a,b)=>(a.datum||'').localeCompare(b.datum||'')).map(e=>(
+                  <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
+                      <div className="text-xs text-gray-500">{e.datum?fmtDate(e.datum):'—'}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
                     </div>
-                  ))}
-                </div>
+                    <div className="flex gap-1">
+                      <button onClick={()=>setKabiForm({...e,tage:[]})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
+                      <button onClick={()=>setDelId(['kabinenbelegung',e.id])} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            );
-          })}
-          {kabinenbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch keine Einträge.</div>}
-          {delKId && <Modal title="Löschen?" onClose={()=>setDelKId(null)}><div className="flex gap-2 mt-2"><Btn variant="secondary" className="flex-1" onClick={()=>setDelKId(null)}>Abbrechen</Btn><button onClick={async()=>{await col('kabinenbelegung').doc(delKId).delete();setDelKId(null);}} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button></div></Modal>}
+            </div>
+          )}
         </>
       )}
 
@@ -4310,22 +4415,15 @@ function AdminPlatzverwaltung({profile, show}) {
             <div key={m.id} className={`bg-white border rounded-xl p-4 ${m.status==='erledigt'?'border-green-200 opacity-70':'border-amber-200'}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1">
-                  <div className="flex gap-2 mb-1">
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${m.status==='erledigt'?'bg-green-100 text-green-700':'bg-amber-100 text-amber-700'}`}>
-                      {m.status==='erledigt'?'✓ Erledigt':'⚠️ Offen'}
-                    </span>
-                    {m.prioritaet && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">{m.prioritaet}</span>}
+                  <div className="flex gap-2 mb-1 flex-wrap">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${m.status==='erledigt'?'bg-green-100 text-green-700':'bg-amber-100 text-amber-700'}`}>{m.status==='erledigt'?'✓ Erledigt':'⚠️ Offen'}</span>
+                    {m.prioritaet&&<span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">{m.prioritaet}</span>}
                   </div>
                   <div className="text-sm font-medium">{m.beschreibung}</div>
-                  {m.ort && <div className="text-xs text-gray-500 mt-0.5">📍 {m.ort}</div>}
+                  {m.ort&&<div className="text-xs text-gray-500 mt-0.5">📍 {m.ort}</div>}
                   <div className="text-xs text-gray-400 mt-1">Von: {m.createdBy}</div>
                 </div>
-                {m.status!=='erledigt' && (
-                  <button onClick={()=>setMaengelStatus(m.id,'erledigt')}
-                    className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700">
-                    ✓ Erledigt
-                  </button>
-                )}
+                {m.status!=='erledigt'&&<button onClick={()=>setMaengelStatus(m.id,'erledigt')} className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700">✓ Erledigt</button>}
               </div>
             </div>
           ))}
@@ -4336,12 +4434,12 @@ function AdminPlatzverwaltung({profile, show}) {
 }
 
 function TrainerPlatzverwaltung({profile, show}) {
-  const [tab,       setTab]       = useState('platz');
-  const [platzbel,  setPlatzbel]  = useState([]);
-  const [kabinenbel,setKabinenbel]= useState([]);
-  const [maengel,   setMaengel]   = useState([]);
-  const [mForm,     setMForm]     = useState(null);
-  const [saving,    setSaving]    = useState(false);
+  const [tab,        setTab]        = useState('platz');
+  const [platzbel,   setPlatzbel]   = useState([]);
+  const [kabinenbel, setKabinenbel] = useState([]);
+  const [maengel,    setMaengel]    = useState([]);
+  const [mForm,      setMForm]      = useState(null);
+  const [saving,     setSaving]     = useState(false);
 
   useEffect(()=>{
     const u1=col('platzbelegung').onSnapshot(s=>setPlatzbel(s.docs.map(d=>({id:d.id,...d.data()}))));
@@ -4360,68 +4458,48 @@ function TrainerPlatzverwaltung({profile, show}) {
     setSaving(false);
   };
 
-  const TAB_BTN = (id,label) => (
-    <button key={id} onClick={()=>setTab(id)}
-      className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-red-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
-      {label}
-    </button>
+  const TabBtn = ({id,label}) => (
+    <button onClick={()=>setTab(id)} className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-red-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{label}</button>
   );
+
+  const platzGrid = platzbel.map(e=>({...e,label:e.teamName,sublabel:`📍${e.platz}${e.uhrzeitVon?` ${e.uhrzeitVon}-${e.uhrzeitBis}`:''}`,color:teamColor(e.teamName)}));
+  const kabiGrid  = kabinenbel.filter(k=>k.typ==='fest').map(e=>({...e,label:e.teamName,sublabel:`🚿${e.kabine}${e.uhrzeit?` ${e.uhrzeit}`:''}`,color:teamColor(e.teamName)}));
 
   return (
     <div className="p-4">
       <h1 className="text-lg font-semibold mb-1">Platz- & Objektverwaltung</h1>
-      <p className="text-xs text-gray-400 mb-4">Belegungspläne & Mängel melden</p>
+      <p className="text-xs text-gray-400 mb-3">Belegungspläne & Mängel melden</p>
       <div className="flex gap-1.5 mb-4">
-        {TAB_BTN('platz','⚽ Platz')}
-        {TAB_BTN('kabine','🚿 Kabinen')}
-        {TAB_BTN('maengel','🔧 Mängel')}
+        <TabBtn id="platz" label="⚽ Platz"/>
+        <TabBtn id="kabine" label="🚿 Kabinen"/>
+        <TabBtn id="maengel" label="🔧 Mängel"/>
       </div>
 
       {tab==='platz' && (
         <>
-          <div className="text-sm font-semibold mb-3">Platzbelegungsplan (Woche)</div>
-          {WOCHENTAGE.map(tag=>{
-            const entries = platzbel.filter(p=>p.tag===tag);
-            if(!entries.length) return null;
-            return (
-              <div key={tag} className="mb-3">
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{tag}</div>
-                <div className="space-y-1.5">
-                  {entries.map(e=>(
-                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
-                      <div className="text-sm font-medium">{e.teamName}</div>
-                      <div className="text-xs text-gray-500">📍 {e.platz}{e.uhrzeitVon&&` · ${e.uhrzeitVon}–${e.uhrzeitBis} Uhr`}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {platzbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch kein Platzbelegungsplan eingetragen.</div>}
+          <div className="text-sm font-semibold mb-2">Platzbelegungsplan</div>
+          <WochenGrid data={platzGrid} emptyText="Noch kein Platzbelegungsplan eingetragen."/>
         </>
       )}
 
       {tab==='kabine' && (
         <>
-          <div className="text-sm font-semibold mb-3">Kabinenbelegungsplan</div>
-          {['fest','flexibel'].map(typ=>{
-            const entries = kabinenbel.filter(k=>k.typ===typ);
-            if(!entries.length) return null;
-            return (
-              <div key={typ} className="mb-4">
-                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{typ==='fest'?'Fest (Wochentage)':'Flexibel (Wochenende)'}</div>
-                <div className="space-y-1.5">
-                  {entries.map(e=>(
-                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
-                      <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
-                      <div className="text-xs text-gray-500">{typ==='fest'?(e.tag||'—'):(e.datum?fmtDate(e.datum):'—')}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
-                    </div>
-                  ))}
-                </div>
+          <div className="text-sm font-semibold mb-2">Kabinenbelegungsplan</div>
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Fest (Wochentage)</div>
+          <WochenGrid data={kabiGrid} emptyText="Noch keine feste Kabinenbelegung."/>
+          {kabinenbel.filter(k=>k.typ==='flexibel').length>0 && (
+            <div className="mt-4">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Flexibel (Wochenende)</div>
+              <div className="space-y-1.5">
+                {kabinenbel.filter(k=>k.typ==='flexibel').sort((a,b)=>(a.datum||'').localeCompare(b.datum||'')).map(e=>(
+                  <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
+                    <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
+                    <div className="text-xs text-gray-500">{e.datum?fmtDate(e.datum):'—'}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
+                  </div>
+                ))}
               </div>
-            );
-          })}
-          {kabinenbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch kein Kabinenbelegungsplan eingetragen.</div>}
+            </div>
+          )}
         </>
       )}
 
@@ -4461,14 +4539,12 @@ function TrainerPlatzverwaltung({profile, show}) {
             <div className="space-y-2">
               {maengel.filter(m=>m.createdBy===profile.name).map(m=>(
                 <div key={m.id} className={`bg-white border rounded-xl p-4 ${m.status==='erledigt'?'border-green-200 opacity-70':'border-amber-200'}`}>
-                  <div className="flex gap-2 mb-1">
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${m.status==='erledigt'?'bg-green-100 text-green-700':'bg-amber-100 text-amber-700'}`}>
-                      {m.status==='erledigt'?'✓ Erledigt':'⚠️ Offen'}
-                    </span>
-                    {m.prioritaet && <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{m.prioritaet}</span>}
+                  <div className="flex gap-2 mb-1 flex-wrap">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${m.status==='erledigt'?'bg-green-100 text-green-700':'bg-amber-100 text-amber-700'}`}>{m.status==='erledigt'?'✓ Erledigt':'⚠️ Offen'}</span>
+                    {m.prioritaet&&<span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{m.prioritaet}</span>}
                   </div>
                   <div className="text-sm">{m.beschreibung}</div>
-                  {m.ort && <div className="text-xs text-gray-500 mt-0.5">📍 {m.ort}</div>}
+                  {m.ort&&<div className="text-xs text-gray-500 mt-0.5">📍 {m.ort}</div>}
                 </div>
               ))}
             </div>
