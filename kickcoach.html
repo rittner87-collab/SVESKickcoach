@@ -537,8 +537,15 @@ function TrainerPlayerDetail({player, onClose, show}) {
   );
 }
 
+const ALL_POSITIONS = ['Torwart','Abwehr','Mittelfeld','Sturm','offen'];
+const getPositions = (p) => {
+  if(p.positions?.length) return p.positions;
+  if(p.position) return [p.position];
+  return ['offen'];
+};
+
 function TrainerKader({profile, show}) {
-  const EMPTY = {name:'',position:'Mittelfeld',number:'',dob:''};
+  const EMPTY = {name:'',positions:[],number:'',dob:''};
   const [players,  setPlayers]  = useState([]);
   const [open,     setOpen]     = useState(false);
   const [editing,  setEditing]  = useState(null);
@@ -546,7 +553,6 @@ function TrainerKader({profile, show}) {
   const [loading,  setLoading]  = useState(false);
   const [delId,    setDelId]    = useState(null);
   const [detail,   setDetail]   = useState(null); // player for recommendation modal
-  const POSITIONS = ['Torwart','Abwehr','Mittelfeld','Sturm'];
 
   useEffect(()=>{
     return col('users').where('teamId','==',profile.teamId).where('role','==','player')
@@ -554,21 +560,23 @@ function TrainerKader({profile, show}) {
   },[]);
 
   const openNew  = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
-  const openEdit = (p) => { setEditing(p.id); setForm({name:p.name||'',position:p.position||'Mittelfeld',number:p.number||'',dob:p.dob||''}); setOpen(true); };
+  const openEdit = (p) => { setEditing(p.id); setForm({name:p.name||'',positions:getPositions(p),number:p.number||'',dob:p.dob||''}); setOpen(true); };
+  const togglePos = (pos) => setForm(f=>({...f, positions: f.positions.includes(pos)?f.positions.filter(x=>x!==pos):[...f.positions,pos]}));
 
   const save = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
+      const positions = form.positions.length ? form.positions : ['offen'];
       if (editing) {
         await col('users').doc(editing).update({
-          name: form.name.trim(), position: form.position,
+          name: form.name.trim(), positions, position: positions[0],
           number: form.number, dob: form.dob,
         });
         show('Spieler aktualisiert ✅');
       } else {
         await col('users').add({
           name: form.name.trim(), role: 'player',
-          teamId: profile.teamId, position: form.position,
+          teamId: profile.teamId, positions, position: positions[0],
           number: form.number, dob: form.dob,
           color: randColor(), claimed: false, uid: '', email: '', createdAt: ts()
         });
@@ -583,8 +591,6 @@ function TrainerKader({profile, show}) {
     await col('users').doc(delId).delete();
     show('Spieler entfernt'); setDelId(null);
   };
-
-  const grouped = POSITIONS.reduce((a,p)=>{ a[p]=players.filter(x=>x.position===p); return a; },{});
 
   return (
     <div className="p-4">
@@ -624,17 +630,20 @@ function TrainerKader({profile, show}) {
           <form onSubmit={save}>
             <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Max Mustermann" required/>
             <Inp label="Geburtsdatum" type="date" value={form.dob} onChange={e=>setForm({...form,dob:e.target.value})}/>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <Sel label="Position" value={form.position} onChange={e=>setForm({...form,position:e.target.value})}>
-                  {POSITIONS.map(p=><option key={p}>{p}</option>)}
-                </Sel>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Position(en)</label>
+              <div className="flex flex-wrap gap-1.5">
+                {ALL_POSITIONS.map(p=>{
+                  const sel=(form.positions||[]).includes(p);
+                  return <button key={p} type="button" onClick={()=>togglePos(p)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all ${sel?'border-red-500 bg-red-50 text-red-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>{p}</button>;
+                })}
               </div>
-              <div className="w-20">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Nr.</label>
-                <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
-              </div>
+            </div>
+            <div className="w-24 mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Nr.</label>
+              <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
             </div>
             <div className="flex gap-2 mt-1">
               <Btn type="button" variant="secondary" className="flex-1" onClick={()=>{setOpen(false);setEditing(null);}}>Abbrechen</Btn>
@@ -647,35 +656,31 @@ function TrainerKader({profile, show}) {
       {players.length===0 ? (
         <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">👥</div><p className="text-sm">Noch keine Spieler im Kader.</p></div>
       ) : (
-        <div className="space-y-5">
-          {POSITIONS.map(pos => grouped[pos].length>0 && (
-            <div key={pos}>
-              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{pos} ({grouped[pos].length})</div>
-              <div className="space-y-1.5">
-                {grouped[pos].map(p=>(
-                  <div key={p.id} onClick={()=>setDetail(p)}
-                    className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:border-red-200 hover:bg-red-50/30 transition-colors">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                      {p.number||initials(p.name)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium truncate">{p.name}</div>
-                      <div className="text-xs text-gray-400 truncate">
-                        {p.dob && <span>{fmtDob(p.dob)} · {fmtAge(p.dob)} J. · </span>}
-                        {p.claimed ? (p.email||'Verknüpft') : 'Noch nicht registriert'}
-                        {p.empfehlung?.team && <span className="text-blue-600 ml-1">· 📋 {p.empfehlung.team}</span>}
-                      </div>
-                    </div>
-                    <div className="flex gap-1 flex-shrink-0 items-center">
-                      {!p.claimed && <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full">Ausstehend</span>}
-                      <button onClick={e=>{e.stopPropagation();openEdit(p);}} className="text-gray-400 hover:text-red-600 px-1.5 py-1 rounded-lg hover:bg-red-50 text-xs">✏️</button>
-                      <button onClick={e=>{e.stopPropagation();setDelId(p.id);}} className="text-gray-400 hover:text-red-600 px-1.5 py-1 rounded-lg hover:bg-red-50 text-xs">🗑</button>
-                    </div>
+        <div className="space-y-1.5">
+          {players.map(p=>{
+            const pos = getPositions(p);
+            return (
+              <div key={p.id} onClick={()=>setDetail(p)}
+                className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:border-red-200 hover:bg-red-50/30 transition-colors">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+                  {p.number||initials(p.name)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{p.name}</div>
+                  <div className="flex flex-wrap gap-1 mt-0.5">
+                    {pos.map(po=><span key={po} className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{po}</span>)}
+                    {p.dob && <span className="text-[10px] text-gray-400">{fmtAge(p.dob)} J.</span>}
+                    {p.empfehlung?.team && <span className="text-[10px] text-blue-600">📋 {p.empfehlung.team}</span>}
                   </div>
-                ))}
+                </div>
+                <div className="flex gap-1 flex-shrink-0 items-center">
+                  {!p.claimed && <span className="text-[10px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full">Ausstehend</span>}
+                  <button onClick={e=>{e.stopPropagation();openEdit(p);}} className="text-gray-400 hover:text-red-600 px-1.5 py-1 rounded-lg hover:bg-red-50 text-xs">✏️</button>
+                  <button onClick={e=>{e.stopPropagation();setDelId(p.id);}} className="text-gray-400 hover:text-red-600 px-1.5 py-1 rounded-lg hover:bg-red-50 text-xs">🗑</button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -1980,7 +1985,7 @@ function TrainerApp({profile}) {
     {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
-    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
+    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
   ];
 
   // Team name lookup
@@ -2013,6 +2018,8 @@ function TrainerApp({profile}) {
     beurteilungen: <><TeamSwitcher/><TrainerBeurteilungen key={activeTeamId} profile={activeProfile} show={show}/></>,
     chat:          <><TeamSwitcher/><ChatPage             key={activeTeamId} profile={activeProfile} accent="red"/></>,
     busplanung:         <TrainerBusplanung profile={activeProfile} show={show}/>,
+    kalender:           <Vereinskalender profile={profile} canEdit={false}/>,
+    platz:              <TrainerPlatzverwaltung profile={activeProfile} show={show}/>,
     dokumente:          <TrainerDokumente/>,
     vorstand:           <TrainerNachrichtAnVorstand profile={profile}/>,
     benachrichtigungen: <TrainerBenachrichtigungen profile={profile}/>,
@@ -2670,21 +2677,29 @@ function AdminPinnwand({profile, show}) {
 //  ADMIN — ÜBERSICHT
 // ═══════════════════════════════════════════════════════════════════
 function AdminOverview() {
-  const [stats, setStats] = useState({trainers:0,players:0,teams:0,sessions:0});
+  const [stats, setStats] = useState({trainers:0,players:0,teams:0,sponsoren:0,sponsorenWarn:0});
   useEffect(()=>{(async()=>{
-    const [users,teams,sess]=await Promise.all([getDocs_(col('users')),getDocs_(col('teams')),getDocs_(col('sessions'))]);
-    setStats({trainers:users.filter(u=>u.role==='trainer').length,players:users.filter(u=>u.role==='player').length,teams:teams.length,sessions:sess.length});
+    const [users,teams,spons]=await Promise.all([getDocs_(col('users')),getDocs_(col('teams')),getDocs_(col('sponsoren'))]);
+    const now = new Date();
+    const warn = spons.filter(s=>{ if(!s.vertragsEnde) return false; const d=Math.ceil((new Date(s.vertragsEnde)-now)/86400000); return d>=0&&d<=30; }).length;
+    setStats({trainers:users.filter(u=>u.role==='trainer'||u.role==='dual').length,players:users.filter(u=>u.role==='player'||u.role==='dual').length,teams:teams.length,sponsoren:spons.length,sponsorenWarn:warn});
   })();},[]);
 
   return (
     <div className="p-4">
       <h1 className="text-lg font-semibold mb-4">Vereinsübersicht</h1>
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        {[{l:'Teams',v:stats.teams,i:'🏟️'},{l:'Trainer',v:stats.trainers,i:'👨‍💼'},{l:'Spieler',v:stats.players,i:'👤'}].map(s=>(
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        {[
+          {l:'Teams',     v:stats.teams,     i:'🏟️'},
+          {l:'Trainer',   v:stats.trainers,  i:'👨‍💼'},
+          {l:'Spieler',   v:stats.players,   i:'👤'},
+          {l:'Sponsoren', v:stats.sponsoren, i:'🤝', warn:stats.sponsorenWarn>0, warnText:`${stats.sponsorenWarn} laufen ab`},
+        ].map(s=>(
           <div key={s.l} className="bg-white border border-gray-200 rounded-2xl p-5">
             <div className="text-2xl mb-1">{s.i}</div>
             <div className="text-3xl font-bold text-purple-600">{s.v}</div>
             <div className="text-sm text-gray-500 mt-0.5">{s.l}</div>
+            {s.warn && <div className="text-[10px] text-amber-600 font-semibold mt-1">⚠️ {s.warnText}</div>}
           </div>
         ))}
       </div>
@@ -3591,8 +3606,7 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
   const [addOpen,    setAddOpen]    = useState(false);
   const [delId,      setDelId]      = useState(null);
   const [saving,     setSaving]     = useState(false);
-  const POSITIONS = ['Torwart','Abwehr','Mittelfeld','Sturm'];
-  const EMPTY_FORM = {name:'',position:'Mittelfeld',number:'',dob:''};
+  const EMPTY_FORM = {name:'',positions:[],number:'',dob:'',mitgliedStatus:'mitglied',anmeldungStatus:'offen'};
   const [form, setForm] = useState(EMPTY_FORM);
 
   useEffect(()=>{
@@ -3609,13 +3623,19 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
       .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||''))));
   },[selTeam]);
 
+  const togglePosAdmin = (pos) => setForm(f=>({...f, positions: (f.positions||[]).includes(pos)?f.positions.filter(x=>x!==pos):[...(f.positions||[]),pos]}));
+
   const addPlayer = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
+      const positions = (form.positions||[]).length ? form.positions : ['offen'];
+      // If Neuanmeldung + erledigt → auto-set to Mitglied
+      const mitgliedStatus = (form.mitgliedStatus==='neuanmeldung' && form.anmeldungStatus==='erledigt') ? 'mitglied' : form.mitgliedStatus;
       await col('users').add({
         name: form.name.trim(), role:'player',
-        teamId: selTeam, position: form.position,
+        teamId: selTeam, positions, position: positions[0],
         number: form.number, dob: form.dob,
+        mitgliedStatus, anmeldungStatus: form.mitgliedStatus==='neuanmeldung' ? form.anmeldungStatus : '',
         color: randColor(), claimed: false, uid:'', email:'', createdAt: ts()
       });
       show('Spieler hinzugefügt ✅'); setForm(EMPTY_FORM); setAddOpen(false);
@@ -3648,18 +3668,47 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
           <form onSubmit={addPlayer}>
             <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Max Mustermann" required/>
             <Inp label="Geburtsdatum" type="date" value={form.dob} onChange={e=>setForm({...form,dob:e.target.value})}/>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <Sel label="Position" value={form.position} onChange={e=>setForm({...form,position:e.target.value})}>
-                  {POSITIONS.map(p=><option key={p}>{p}</option>)}
-                </Sel>
-              </div>
-              <div className="w-20">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Nr.</label>
-                <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Position(en)</label>
+              <div className="flex flex-wrap gap-1.5">
+                {ALL_POSITIONS.map(p=>{
+                  const sel=(form.positions||[]).includes(p);
+                  return <button key={p} type="button" onClick={()=>togglePosAdmin(p)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all ${sel?'border-red-500 bg-red-50 text-red-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>{p}</button>;
+                })}
               </div>
             </div>
+            <div className="w-24 mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Nr.</label>
+              <input value={form.number} onChange={e=>setForm({...form,number:e.target.value})} placeholder="#"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+            </div>
+            {/* Mitgliedsstatus */}
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Status</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[['mitglied','Mitglied','🟢'],['neuanmeldung','Neuanmeldung','🔵']].map(([v,l,e])=>(
+                  <button key={v} type="button" onClick={()=>setForm(f=>({...f,mitgliedStatus:v}))}
+                    className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${form.mitgliedStatus===v?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                    {e} {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {form.mitgliedStatus==='neuanmeldung' && (
+              <div className="mb-3 bg-blue-50 border border-blue-100 rounded-xl p-3">
+                <div className="text-xs font-medium text-blue-700 mb-2">Anmeldungsstatus</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[['offen','Noch offen'],['erledigt','Erledigt ✓']].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>setForm(f=>({...f,anmeldungStatus:v}))}
+                      className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${form.anmeldungStatus===v?'border-blue-500 bg-blue-100 text-blue-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                {form.anmeldungStatus==='erledigt' && <div className="text-[10px] text-green-600 mt-1.5">✓ Wird automatisch als Mitglied eingetragen.</div>}
+              </div>
+            )}
             <div className="flex gap-2 mt-1">
               <button type="button" className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>{setAddOpen(false);setForm(EMPTY_FORM);}}>Abbrechen</button>
               <button type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold disabled:opacity-40">{saving?'…':'Hinzufügen'}</button>
@@ -3727,9 +3776,11 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
 }
 
 function AdminPlayerDetail({player, onClose, show}) {
-  const [notizen,      setNotizen]      = useState(player.vorstandNotizen||'');
-  const [vereinsarbeit,setVereinsarbeit]= useState(player.vereinsarbeit||false);
-  const [saving,       setSaving]       = useState(false);
+  const [notizen,        setNotizen]        = useState(player.vorstandNotizen||'');
+  const [vereinsarbeit,  setVereinsarbeit]  = useState(player.vereinsarbeit||false);
+  const [mitgliedStatus, setMitgliedStatus] = useState(player.mitgliedStatus||'mitglied');
+  const [anmeldungStatus,setAnmeldungStatus]= useState(player.anmeldungStatus||'offen');
+  const [saving,         setSaving]         = useState(false);
   const [uploadLabel,  setUploadLabel]  = useState('');
   const [uploading,    setUploading]    = useState(false);
   const [docs,         setDocs]         = useState([]);
@@ -3747,7 +3798,13 @@ function AdminPlayerDetail({player, onClose, show}) {
 
   const saveNotes = async () => {
     setSaving(true);
-    await col('users').doc(player.id).update({vorstandNotizen: notizen, vereinsarbeit});
+    // Auto-set to Mitglied if Neuanmeldung erledigt
+    const finalStatus = (mitgliedStatus==='neuanmeldung' && anmeldungStatus==='erledigt') ? 'mitglied' : mitgliedStatus;
+    await col('users').doc(player.id).update({
+      vorstandNotizen: notizen, vereinsarbeit,
+      mitgliedStatus: finalStatus,
+      anmeldungStatus: finalStatus==='mitglied' ? '' : anmeldungStatus,
+    });
     show('Gespeichert ✅'); setSaving(false);
   };
 
@@ -3813,6 +3870,33 @@ function AdminPlayerDetail({player, onClose, show}) {
           </div>
         )}
 
+        {/* Mitgliedsstatus */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className="text-xs font-semibold text-gray-600 mb-2">Mitgliedsstatus</div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            {[['mitglied','Mitglied','🟢'],['neuanmeldung','Neuanmeldung','🔵']].map(([v,l,e])=>(
+              <button key={v} type="button" onClick={()=>setMitgliedStatus(v)}
+                className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${mitgliedStatus===v?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                {e} {l}
+              </button>
+            ))}
+          </div>
+          {mitgliedStatus==='neuanmeldung' && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+              <div className="text-xs font-medium text-blue-700 mb-2">Anmeldungsstatus</div>
+              <div className="grid grid-cols-2 gap-2">
+                {[['offen','Noch offen'],['erledigt','Erledigt ✓']].map(([v,l])=>(
+                  <button key={v} type="button" onClick={()=>setAnmeldungStatus(v)}
+                    className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${anmeldungStatus===v?'border-blue-500 bg-blue-100 text-blue-700':'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {anmeldungStatus==='erledigt' && <div className="text-[10px] text-green-600 mt-1.5">✓ Wird automatisch als Mitglied gespeichert.</div>}
+            </div>
+          )}
+        </div>
+
         {/* Vereinsarbeit */}
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <label className="flex items-center gap-3 cursor-pointer">
@@ -3867,6 +3951,531 @@ function AdminPlayerDetail({player, onClose, show}) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  VEREINSKALENDER (alle Rollen — nur Vorstand kann eintragen)
+// ═══════════════════════════════════════════════════════════════════
+function Vereinskalender({profile, canEdit}) {
+  const [events,  setEvents]  = useState([]);
+  const [month,   setMonth]   = useState(new Date().toISOString().slice(0,7));
+  const [form,    setForm]    = useState(null);
+  const [delId,   setDelId]   = useState(null);
+  const [saving,  setSaving]  = useState(false);
+  const EMPTY = {titel:'',datum:'',uhrzeit:'',ort:'',beschreibung:''};
+  const CATS = ['Spiel','Training','Vereinsfeier','Versammlung','Sonstiges'];
+  const CAT_COLOR = {Spiel:'#DC2626',Training:'#2563EB',Vereinsfeier:'#7C3AED',Versammlung:'#D97706',Sonstiges:'#6B7280'};
+
+  useEffect(()=>{
+    const [y,m]=month.split('-');
+    const start=`${y}-${m}-01`;
+    const end=`${y}-${String(Number(m)%12+1).padStart(2,'0')}-01`;
+    return col('vereinskalender').where('datum','>=',start).where('datum','<',end)
+      .onSnapshot(s=>setEvents(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.datum.localeCompare(b.datum)||(a.uhrzeit||'').localeCompare(b.uhrzeit||''))));
+  },[month]);
+
+  const save = async () => {
+    if(!form.titel?.trim()||!form.datum) return;
+    setSaving(true);
+    try {
+      const data={...form,titel:form.titel.trim(),createdBy:profile.name};
+      if(form.id) await col('vereinskalender').doc(form.id).update(data);
+      else        await col('vereinskalender').add({...data,createdAt:ts()});
+      setForm(null);
+    } catch(e){console.error(e);}
+    setSaving(false);
+  };
+
+  const doDelete = async () => { await col('vereinskalender').doc(delId).delete(); setDelId(null); };
+  const prev = ()=>{ const d=new Date(month+'-01'); d.setMonth(d.getMonth()-1); setMonth(d.toISOString().slice(0,7)); };
+  const next = ()=>{ const d=new Date(month+'-01'); d.setMonth(d.getMonth()+1); setMonth(d.toISOString().slice(0,7)); };
+  const monthLabel = new Date(month+'-01').toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+
+  return (
+    <div className="p-4">
+      {delId && (
+        <Modal title="Termin löschen?" onClose={()=>setDelId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diesen Termin wirklich löschen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelId(null)}>Abbrechen</Btn>
+            <button onClick={doDelete} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button>
+          </div>
+        </Modal>
+      )}
+      {form && canEdit && (
+        <Modal title={form.id?'Termin bearbeiten':'Neuer Termin'} onClose={()=>setForm(null)}>
+          <Inp label="Titel *" value={form.titel||''} onChange={e=>setForm(p=>({...p,titel:e.target.value}))}/>
+          <div className="grid grid-cols-2 gap-2">
+            <Inp label="Datum *" type="date" value={form.datum||''} onChange={e=>setForm(p=>({...p,datum:e.target.value}))}/>
+            <Inp label="Uhrzeit" type="time" value={form.uhrzeit||''} onChange={e=>setForm(p=>({...p,uhrzeit:e.target.value}))}/>
+          </div>
+          <Inp label="Ort" value={form.ort||''} onChange={e=>setForm(p=>({...p,ort:e.target.value}))} placeholder="z.B. Sportplatz, Vereinsheim"/>
+          <div className="mb-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Kategorie</label>
+            <div className="flex flex-wrap gap-1.5">
+              {CATS.map(c=>{
+                const sel=form.kategorie===c;
+                return <button key={c} type="button" onClick={()=>setForm(p=>({...p,kategorie:c}))}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border-2 transition-all ${sel?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{c}</button>;
+              })}
+            </div>
+          </div>
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Beschreibung</label>
+            <textarea rows={2} value={form.beschreibung||''} onChange={e=>setForm(p=>({...p,beschreibung:e.target.value}))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+          </div>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setForm(null)}>Abbrechen</Btn>
+            <Btn className="flex-1" onClick={save} disabled={!form.titel?.trim()||!form.datum||saving}>{saving?'…':'Speichern'}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-lg font-semibold">Vereinskalender</h1>
+          <p className="text-xs text-gray-400">{events.length} Termin{events.length!==1?'e':''} diesen Monat</p>
+        </div>
+        {canEdit && (
+          <button onClick={()=>setForm({...EMPTY})} className="px-3 py-2 rounded-xl bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 transition-colors">+ Termin</button>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between px-4 py-3 bg-white border border-gray-200 rounded-xl mb-3">
+        <button onClick={prev} className="p-1 rounded hover:bg-gray-100 text-gray-500">◀</button>
+        <span className="text-sm font-semibold">{monthLabel}</span>
+        <button onClick={next} className="p-1 rounded hover:bg-gray-100 text-gray-500">▶</button>
+      </div>
+
+      {events.length===0 ? (
+        <div className="text-center text-gray-400 py-10 text-sm">Keine Termine in diesem Monat.</div>
+      ) : (
+        <div className="space-y-2">
+          {events.map(ev=>{
+            const color = CAT_COLOR[ev.kategorie]||CAT_COLOR.Sonstiges;
+            return (
+              <div key={ev.id} className="bg-white border border-gray-200 rounded-xl p-4 flex gap-3">
+                <div className="w-1 rounded-full flex-shrink-0 self-stretch" style={{background:color}}/>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-sm">{ev.titel}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        📅 {fmtDate(ev.datum)}{ev.uhrzeit&&` · ${ev.uhrzeit} Uhr`}{ev.ort&&` · 📍 ${ev.ort}`}
+                      </div>
+                      {ev.kategorie && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{background:color+'22',color}}>{ev.kategorie}</span>}
+                      {ev.beschreibung && <div className="text-xs text-gray-500 mt-1">{ev.beschreibung}</div>}
+                    </div>
+                    {canEdit && (
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button onClick={()=>setForm({...ev})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
+                        <button onClick={()=>setDelId(ev.id)} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PLATZVERWALTUNG (Vorstand: bearbeiten / Trainer: ansehen + Mängel)
+// ═══════════════════════════════════════════════════════════════════
+const WOCHENTAGE = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+
+function AdminPlatzverwaltung({profile, show}) {
+  const [tab,         setTab]         = useState('platz'); // 'platz'|'kabine'|'maengel'
+  const [teams,       setTeams]       = useState([]);
+  const [platzbel,    setPlatzbel]    = useState([]);
+  const [kabinenbel,  setKabinenbel]  = useState([]);
+  const [maengel,     setMaengel]     = useState([]);
+  const [form,        setForm]        = useState(null);
+  const [kabiForm,    setKabiForm]    = useState(null);
+  const [delPId,      setDelPId]      = useState(null);
+  const [delKId,      setDelKId]      = useState(null);
+  const [saving,      setSaving]      = useState(false);
+
+  useEffect(()=>{
+    const u1=col('teams').onSnapshot(s=>setTeams(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.name.localeCompare(b.name))));
+    const u2=col('platzbelegung').onSnapshot(s=>setPlatzbel(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3=col('kabinenbelegung').onSnapshot(s=>setKabinenbel(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u4=col('maengel').onSnapshot(s=>setMaengel(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))));
+    return ()=>{u1();u2();u3();u4();};
+  },[]);
+
+  const teamName = (id) => teams.find(t=>t.id===id)?.name||id;
+
+  // Platzbelegung
+  const savePlatz = async () => {
+    if(!form.teamId||!form.tag||!form.platz) return;
+    setSaving(true);
+    try {
+      const data={teamId:form.teamId,teamName:teamName(form.teamId),tag:form.tag,platz:form.platz,uhrzeitVon:form.uhrzeitVon||'',uhrzeitBis:form.uhrzeitBis||''};
+      if(form.id) await col('platzbelegung').doc(form.id).update(data);
+      else        await col('platzbelegung').add({...data,createdAt:ts()});
+      show('Gespeichert ✅'); setForm(null);
+    } catch(e){show(e.message,'error');}
+    setSaving(false);
+  };
+
+  // Kabinenbelegung
+  const saveKabine = async () => {
+    if(!kabiForm.teamId||!kabiForm.kabine) return;
+    setSaving(true);
+    try {
+      const data={teamId:kabiForm.teamId,teamName:teamName(kabiForm.teamId),kabine:kabiForm.kabine,typ:kabiForm.typ||'fest',tag:kabiForm.tag||'',datum:kabiForm.datum||'',uhrzeit:kabiForm.uhrzeit||''};
+      if(kabiForm.id) await col('kabinenbelegung').doc(kabiForm.id).update(data);
+      else            await col('kabinenbelegung').add({...data,createdAt:ts()});
+      show('Gespeichert ✅'); setKabiForm(null);
+    } catch(e){show(e.message,'error');}
+    setSaving(false);
+  };
+
+  const setMaengelStatus = async (id,status) => {
+    await col('maengel').doc(id).update({status,erledigt_by:profile.name,erledigt_at:ts()});
+    show('Status aktualisiert ✅');
+  };
+
+  const TAB_BTN = (id,label) => (
+    <button key={id} onClick={()=>setTab(id)}
+      className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-purple-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-1">Platz- & Objektverwaltung</h1>
+      <p className="text-xs text-gray-400 mb-4">Belegungspläne und Mängelmeldungen</p>
+      <div className="flex gap-1.5 mb-4">
+        {TAB_BTN('platz','⚽ Platz')}
+        {TAB_BTN('kabine','🚿 Kabinen')}
+        {TAB_BTN('maengel','🔧 Mängel')}
+      </div>
+
+      {/* ── PLATZBELEGUNG ── */}
+      {tab==='platz' && (
+        <>
+          {form && (
+            <Modal title={form.id?'Eintrag bearbeiten':'Platzbelegung eintragen'} onClose={()=>setForm(null)}>
+              <div className="mb-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Team</label>
+                <select value={form.teamId||''} onChange={e=>setForm(p=>({...p,teamId:e.target.value}))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                  <option value="">— Team wählen —</option>
+                  {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div className="mb-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Wochentag</label>
+                <div className="flex gap-1 flex-wrap">
+                  {WOCHENTAGE.map(t=>(
+                    <button key={t} type="button" onClick={()=>setForm(p=>({...p,tag:t}))}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${form.tag===t?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{t}</button>
+                  ))}
+                </div>
+              </div>
+              <Inp label="Platz / Feld" value={form.platz||''} onChange={e=>setForm(p=>({...p,platz:e.target.value}))} placeholder="z.B. Hauptplatz, Nebenplatz"/>
+              <div className="grid grid-cols-2 gap-2">
+                <div><label className="block text-xs font-medium text-gray-600 mb-1">Von</label><input type="time" value={form.uhrzeitVon||''} onChange={e=>setForm(p=>({...p,uhrzeitVon:e.target.value}))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
+                <div><label className="block text-xs font-medium text-gray-600 mb-1">Bis</label><input type="time" value={form.uhrzeitBis||''} onChange={e=>setForm(p=>({...p,uhrzeitBis:e.target.value}))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Btn variant="secondary" className="flex-1" onClick={()=>setForm(null)}>Abbrechen</Btn>
+                <Btn className="flex-1" onClick={savePlatz} disabled={!form.teamId||!form.tag||!form.platz||saving}>{saving?'…':'Speichern'}</Btn>
+              </div>
+            </Modal>
+          )}
+          <div className="flex justify-between items-center mb-3">
+            <div className="text-sm font-semibold">Platzbelegungsplan (Woche)</div>
+            <button onClick={()=>setForm({teamId:'',tag:'',platz:'',uhrzeitVon:'',uhrzeitBis:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
+          </div>
+          {WOCHENTAGE.map(tag=>{
+            const entries = platzbel.filter(p=>p.tag===tag);
+            if(!entries.length) return null;
+            return (
+              <div key={tag} className="mb-3">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{tag}</div>
+                <div className="space-y-1.5">
+                  {entries.map(e=>(
+                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium">{e.teamName}</div>
+                        <div className="text-xs text-gray-500">📍 {e.platz}{e.uhrzeitVon&&` · ${e.uhrzeitVon}–${e.uhrzeitBis} Uhr`}</div>
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={()=>setForm({...e})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
+                        <button onClick={()=>setDelPId(e.id)} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {platzbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch keine Einträge.</div>}
+          {delPId && <Modal title="Löschen?" onClose={()=>setDelPId(null)}><div className="flex gap-2 mt-2"><Btn variant="secondary" className="flex-1" onClick={()=>setDelPId(null)}>Abbrechen</Btn><button onClick={async()=>{await col('platzbelegung').doc(delPId).delete();setDelPId(null);}} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button></div></Modal>}
+        </>
+      )}
+
+      {/* ── KABINENBELEGUNG ── */}
+      {tab==='kabine' && (
+        <>
+          {kabiForm && (
+            <Modal title={kabiForm.id?'Eintrag bearbeiten':'Kabinenbelegung eintragen'} onClose={()=>setKabiForm(null)}>
+              <div className="mb-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Team</label>
+                <select value={kabiForm.teamId||''} onChange={e=>setKabiForm(p=>({...p,teamId:e.target.value}))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                  <option value="">— Team wählen —</option>
+                  {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <Inp label="Kabine / Umkleide" value={kabiForm.kabine||''} onChange={e=>setKabiForm(p=>({...p,kabine:e.target.value}))} placeholder="z.B. Kabine 1, Kabine A"/>
+              <div className="mb-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Art</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[['fest','🗓 Fest (Wochentag)'],['flexibel','📅 Flexibel (Datum)']].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>setKabiForm(p=>({...p,typ:v}))}
+                      className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${kabiForm.typ===v?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              {kabiForm.typ==='fest' ? (
+                <div className="mb-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Wochentag</label>
+                  <div className="flex gap-1 flex-wrap">
+                    {WOCHENTAGE.map(t=>(
+                      <button key={t} type="button" onClick={()=>setKabiForm(p=>({...p,tag:t}))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${kabiForm.tag===t?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-500'}`}>{t}</button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <Inp label="Datum (Wochenende)" type="date" value={kabiForm.datum||''} onChange={e=>setKabiForm(p=>({...p,datum:e.target.value}))}/>
+              )}
+              <Inp label="Uhrzeit" type="time" value={kabiForm.uhrzeit||''} onChange={e=>setKabiForm(p=>({...p,uhrzeit:e.target.value}))}/>
+              <div className="flex gap-2 mt-3">
+                <Btn variant="secondary" className="flex-1" onClick={()=>setKabiForm(null)}>Abbrechen</Btn>
+                <Btn className="flex-1" onClick={saveKabine} disabled={!kabiForm.teamId||!kabiForm.kabine||saving}>{saving?'…':'Speichern'}</Btn>
+              </div>
+            </Modal>
+          )}
+          <div className="flex justify-between items-center mb-3">
+            <div className="text-sm font-semibold">Kabinenbelegungsplan</div>
+            <button onClick={()=>setKabiForm({teamId:'',kabine:'',typ:'fest',tag:'',datum:'',uhrzeit:''})} className="px-3 py-1.5 rounded-xl bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">+ Eintrag</button>
+          </div>
+          {['fest','flexibel'].map(typ=>{
+            const entries = kabinenbel.filter(k=>k.typ===typ);
+            if(!entries.length) return null;
+            return (
+              <div key={typ} className="mb-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{typ==='fest'?'Fest (Wochentage)':'Flexibel (Wochenende)'}</div>
+                <div className="space-y-1.5">
+                  {entries.map(e=>(
+                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
+                        <div className="text-xs text-gray-500">{typ==='fest'?(e.tag||'—'):(e.datum?fmtDate(e.datum):'—')}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={()=>setKabiForm({...e})} className="p-1 rounded hover:bg-purple-50 text-purple-500 text-sm">✏️</button>
+                        <button onClick={()=>setDelKId(e.id)} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 text-sm">🗑</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {kabinenbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch keine Einträge.</div>}
+          {delKId && <Modal title="Löschen?" onClose={()=>setDelKId(null)}><div className="flex gap-2 mt-2"><Btn variant="secondary" className="flex-1" onClick={()=>setDelKId(null)}>Abbrechen</Btn><button onClick={async()=>{await col('kabinenbelegung').doc(delKId).delete();setDelKId(null);}} className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold">Löschen</button></div></Modal>}
+        </>
+      )}
+
+      {/* ── MÄNGELMELDUNGEN ── */}
+      {tab==='maengel' && (
+        <div className="space-y-3">
+          <div className="text-sm font-semibold mb-1">Mängelmeldungen vom Trainer</div>
+          {maengel.length===0 ? (
+            <div className="text-center text-gray-400 py-10 text-sm">Keine Meldungen.</div>
+          ) : maengel.map(m=>(
+            <div key={m.id} className={`bg-white border rounded-xl p-4 ${m.status==='erledigt'?'border-green-200 opacity-70':'border-amber-200'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1">
+                  <div className="flex gap-2 mb-1">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${m.status==='erledigt'?'bg-green-100 text-green-700':'bg-amber-100 text-amber-700'}`}>
+                      {m.status==='erledigt'?'✓ Erledigt':'⚠️ Offen'}
+                    </span>
+                    {m.prioritaet && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">{m.prioritaet}</span>}
+                  </div>
+                  <div className="text-sm font-medium">{m.beschreibung}</div>
+                  {m.ort && <div className="text-xs text-gray-500 mt-0.5">📍 {m.ort}</div>}
+                  <div className="text-xs text-gray-400 mt-1">Von: {m.createdBy}</div>
+                </div>
+                {m.status!=='erledigt' && (
+                  <button onClick={()=>setMaengelStatus(m.id,'erledigt')}
+                    className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700">
+                    ✓ Erledigt
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrainerPlatzverwaltung({profile, show}) {
+  const [tab,       setTab]       = useState('platz');
+  const [platzbel,  setPlatzbel]  = useState([]);
+  const [kabinenbel,setKabinenbel]= useState([]);
+  const [maengel,   setMaengel]   = useState([]);
+  const [mForm,     setMForm]     = useState(null);
+  const [saving,    setSaving]    = useState(false);
+
+  useEffect(()=>{
+    const u1=col('platzbelegung').onSnapshot(s=>setPlatzbel(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=col('kabinenbelegung').onSnapshot(s=>setKabinenbel(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3=col('maengel').onSnapshot(s=>setMaengel(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))));
+    return ()=>{u1();u2();u3();};
+  },[]);
+
+  const saveMaengel = async () => {
+    if(!mForm.beschreibung?.trim()) return;
+    setSaving(true);
+    try {
+      await col('maengel').add({beschreibung:mForm.beschreibung.trim(),ort:mForm.ort||'',prioritaet:mForm.prioritaet||'Normal',status:'offen',createdBy:profile.name,teamId:profile.teamId,createdAt:ts()});
+      show('Mängelmeldung eingereicht ✅'); setMForm(null);
+    } catch(e){show(e.message,'error');}
+    setSaving(false);
+  };
+
+  const TAB_BTN = (id,label) => (
+    <button key={id} onClick={()=>setTab(id)}
+      className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-red-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-1">Platz- & Objektverwaltung</h1>
+      <p className="text-xs text-gray-400 mb-4">Belegungspläne & Mängel melden</p>
+      <div className="flex gap-1.5 mb-4">
+        {TAB_BTN('platz','⚽ Platz')}
+        {TAB_BTN('kabine','🚿 Kabinen')}
+        {TAB_BTN('maengel','🔧 Mängel')}
+      </div>
+
+      {tab==='platz' && (
+        <>
+          <div className="text-sm font-semibold mb-3">Platzbelegungsplan (Woche)</div>
+          {WOCHENTAGE.map(tag=>{
+            const entries = platzbel.filter(p=>p.tag===tag);
+            if(!entries.length) return null;
+            return (
+              <div key={tag} className="mb-3">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">{tag}</div>
+                <div className="space-y-1.5">
+                  {entries.map(e=>(
+                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
+                      <div className="text-sm font-medium">{e.teamName}</div>
+                      <div className="text-xs text-gray-500">📍 {e.platz}{e.uhrzeitVon&&` · ${e.uhrzeitVon}–${e.uhrzeitBis} Uhr`}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {platzbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch kein Platzbelegungsplan eingetragen.</div>}
+        </>
+      )}
+
+      {tab==='kabine' && (
+        <>
+          <div className="text-sm font-semibold mb-3">Kabinenbelegungsplan</div>
+          {['fest','flexibel'].map(typ=>{
+            const entries = kabinenbel.filter(k=>k.typ===typ);
+            if(!entries.length) return null;
+            return (
+              <div key={typ} className="mb-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{typ==='fest'?'Fest (Wochentage)':'Flexibel (Wochenende)'}</div>
+                <div className="space-y-1.5">
+                  {entries.map(e=>(
+                    <div key={e.id} className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
+                      <div className="text-sm font-medium">{e.teamName} · {e.kabine}</div>
+                      <div className="text-xs text-gray-500">{typ==='fest'?(e.tag||'—'):(e.datum?fmtDate(e.datum):'—')}{e.uhrzeit&&` · ${e.uhrzeit} Uhr`}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {kabinenbel.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch kein Kabinenbelegungsplan eingetragen.</div>}
+        </>
+      )}
+
+      {tab==='maengel' && (
+        <>
+          {mForm && (
+            <Modal title="Mängel melden" onClose={()=>setMForm(null)}>
+              <div className="mb-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Beschreibung *</label>
+                <textarea rows={3} value={mForm.beschreibung||''} onChange={e=>setMForm(p=>({...p,beschreibung:e.target.value}))}
+                  placeholder="Was ist aufgefallen?"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500"/>
+              </div>
+              <Inp label="Ort / Bereich" value={mForm.ort||''} onChange={e=>setMForm(p=>({...p,ort:e.target.value}))} placeholder="z.B. Hauptplatz, Kabine 1"/>
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Priorität</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {['Normal','Hoch','Dringend'].map(p=>(
+                    <button key={p} type="button" onClick={()=>setMForm(f=>({...f,prioritaet:p}))}
+                      className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${mForm.prioritaet===p?'border-red-500 bg-red-50 text-red-700':'border-gray-200 text-gray-500'}`}>{p}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Btn variant="secondary" className="flex-1" onClick={()=>setMForm(null)}>Abbrechen</Btn>
+                <Btn className="flex-1" onClick={saveMaengel} disabled={!mForm.beschreibung?.trim()||saving}>{saving?'…':'Melden'}</Btn>
+              </div>
+            </Modal>
+          )}
+          <div className="flex justify-between items-center mb-3">
+            <div className="text-sm font-semibold">Meine Meldungen</div>
+            <button onClick={()=>setMForm({beschreibung:'',ort:'',prioritaet:'Normal'})} className="px-3 py-1.5 rounded-xl bg-red-600 text-white text-xs font-semibold hover:bg-red-700">+ Melden</button>
+          </div>
+          {maengel.filter(m=>m.createdBy===profile.name).length===0 ? (
+            <div className="text-center text-gray-400 py-10 text-sm">Noch keine Meldungen.</div>
+          ) : (
+            <div className="space-y-2">
+              {maengel.filter(m=>m.createdBy===profile.name).map(m=>(
+                <div key={m.id} className={`bg-white border rounded-xl p-4 ${m.status==='erledigt'?'border-green-200 opacity-70':'border-amber-200'}`}>
+                  <div className="flex gap-2 mb-1">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${m.status==='erledigt'?'bg-green-100 text-green-700':'bg-amber-100 text-amber-700'}`}>
+                      {m.status==='erledigt'?'✓ Erledigt':'⚠️ Offen'}
+                    </span>
+                    {m.prioritaet && <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{m.prioritaet}</span>}
+                  </div>
+                  <div className="text-sm">{m.beschreibung}</div>
+                  {m.ort && <div className="text-xs text-gray-500 mt-0.5">📍 {m.ort}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -4266,6 +4875,8 @@ function AdminApp({profile}) {
       {id:'nachrichten',   icon:'💬',  label:'Nachrichten'},
     ]},
     {section:'Management', items:[
+      {id:'kalender',      icon:'📆',  label:'Vereinskalender'},
+      {id:'platz',         icon:'🏟️', label:'Platzverwaltung'},
       {id:'sponsoren',     icon:'🤝',  label:'Sponsoren'},
       {id:'aufgaben',      icon:'📋',  label:'Aufgaben'},
     ]},
@@ -4281,6 +4892,8 @@ function AdminApp({profile}) {
     pinnwand:           <AdminPinnwand profile={profile} show={show}/>,
     dokumente:          <AdminDokumente profile={profile} show={show}/>,
     nachrichten:        <VorstandNachrichten profile={profile}/>,
+    kalender:           <Vereinskalender profile={profile} canEdit={true}/>,
+    platz:              <AdminPlatzverwaltung profile={profile} show={show}/>,
     sponsoren:          <AdminSponsoren show={show}/>,
     aufgaben:           <AdminAufgaben profile={profile} show={show}/>,
   };
