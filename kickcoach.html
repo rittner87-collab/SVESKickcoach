@@ -70,6 +70,58 @@ const fmtAgo   = (ts) => {
   return d.toLocaleDateString('de-DE',{day:'numeric',month:'long'});
 };
 
+// ═══════════════════════════════════════════════════════════════════
+//  IN-APP BENACHRICHTIGUNGEN (Firestore-basiert)
+// ═══════════════════════════════════════════════════════════════════
+async function createNotificationsForTeam(teamId, {type, title, body}, excludeUid=null) {
+  try {
+    const [players, trainers] = await Promise.all([
+      col('users').where('teamId','==',teamId).get(),
+      col('users').where('trainerTeamId','==',teamId).get(),
+    ]);
+    const seen = new Set();
+    const docs = [...players.docs, ...trainers.docs].filter(d=>{
+      if(seen.has(d.id)||d.id===excludeUid) return false;
+      seen.add(d.id); return true;
+    });
+    await Promise.all(docs.map(d=>col('notifications').add({
+      userId:d.id, type, title, body, read:false, createdAt:ts()
+    })));
+  } catch(e){ console.warn('Notification error', e); }
+}
+
+async function createNotificationsForAll({type, title, body}, excludeUid=null) {
+  try {
+    const snap = await col('users').get();
+    await Promise.all(snap.docs.filter(d=>d.id!==excludeUid).map(d=>col('notifications').add({
+      userId:d.id, type, title, body, read:false, createdAt:ts()
+    })));
+  } catch(e){ console.warn('Notification error', e); }
+}
+
+// Stub-Funktionen damit die Trainer-Hooks kompilieren
+async function notifyNewTraining(session) {
+  const uid = firebase.auth().currentUser?.uid;
+  await createNotificationsForTeam(session.teamId, {
+    type:'training', title:'🏃 Neues Training',
+    body:`${fmtDate(session.date)} um ${session.time||'?'} Uhr${session.location?' · '+session.location:''}`
+  }, uid);
+}
+async function notifyNewGame(game) {
+  const uid = firebase.auth().currentUser?.uid;
+  await createNotificationsForTeam(game.teamId, {
+    type:'spiel', title:'⚽ Neuer Spieltag',
+    body:`${game.opponent||'?'} am ${fmtDate(game.date)}${game.time?' · Anstoß '+game.time+' Uhr':''}`
+  }, uid);
+}
+async function notifyAnnouncement(title, message) {
+  const uid = firebase.auth().currentUser?.uid;
+  await createNotificationsForAll({
+    type:'news', title:`📢 ${title}`,
+    body: message.length>120 ? message.slice(0,120)+'…' : message
+  }, uid);
+}
+
 // ─── UI Components ──────────────────────────────────────────────────
 const Spinner = () => (
   <div className="flex items-center justify-center p-12">
@@ -351,6 +403,82 @@ function TeamPicker({profile, onTeamSelected}) {
 // ═══════════════════════════════════════════════════════════════════
 //  SHARED LAYOUT (Sidebar + Mobile Toggle)
 // ═══════════════════════════════════════════════════════════════════
+function NotificationBell({profile}) {
+  const [notifs, setNotifs] = useState([]);
+  const [open, setOpen] = useState(false);
+
+  useEffect(()=>{
+    if(!profile?.id) return;
+    return col('notifications').where('userId','==',profile.id)
+      .orderBy('createdAt','desc').limit(30)
+      .onSnapshot(s=>setNotifs(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[profile?.id]);
+
+  const unread = notifs.filter(n=>!n.read).length;
+
+  const markAllRead = async () => {
+    const unreadDocs = notifs.filter(n=>!n.read);
+    await Promise.all(unreadDocs.map(n=>col('notifications').doc(n.id).update({read:true})));
+  };
+
+  const deleteNotif = async (id, e) => {
+    e.stopPropagation();
+    await col('notifications').doc(id).delete();
+  };
+
+  const handleOpen = () => {
+    setOpen(o=>!o);
+    if(!open && unread>0) markAllRead();
+  };
+
+  const TYPE_ICON = {training:'🏃', spiel:'⚽', news:'📢'};
+
+  return (
+    <div className="relative">
+      <button onClick={handleOpen}
+        className="relative flex items-center justify-center w-8 h-8 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors">
+        🔔
+        {unread>0 && (
+          <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full text-[10px] font-bold text-white flex items-center justify-center">
+            {unread>9?'9+':unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute bottom-10 left-0 w-72 bg-gray-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50"
+          style={{maxHeight:'360px'}}>
+          <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+            <span className="text-xs font-semibold text-white">Benachrichtigungen</span>
+            {notifs.length>0 && (
+              <button onClick={async()=>{
+                if(confirm('Alle löschen?'))
+                  await Promise.all(notifs.map(n=>col('notifications').doc(n.id).delete()));
+              }} className="text-[10px] text-white/30 hover:text-white/60">Alle löschen</button>
+            )}
+          </div>
+          <div className="overflow-y-auto" style={{maxHeight:'300px'}}>
+            {notifs.length===0 && (
+              <div className="px-4 py-6 text-center text-white/30 text-xs">Keine Benachrichtigungen</div>
+            )}
+            {notifs.map(n=>(
+              <div key={n.id} className={`flex items-start gap-2 px-3 py-2.5 border-b border-white/5 hover:bg-white/5 ${!n.read?'bg-white/5':''}`}>
+                <span className="text-base flex-shrink-0 mt-0.5">{TYPE_ICON[n.type]||'🔔'}</span>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-xs font-semibold truncate ${n.read?'text-white/50':'text-white'}`}>{n.title}</div>
+                  <div className="text-[11px] text-white/40 leading-snug mt-0.5">{n.body}</div>
+                  {n.createdAt && <div className="text-[10px] text-white/20 mt-0.5">{fmtAgo(n.createdAt)}</div>}
+                </div>
+                <button onClick={e=>deleteNotif(n.id,e)} className="text-white/20 hover:text-white/60 text-xs flex-shrink-0">✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {open && <div className="fixed inset-0 z-40" onClick={()=>setOpen(false)}/>}
+    </div>
+  );
+}
+
 function Layout({profile, nav, page, setPage, onLogout, accent='red', extraHeader, children}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showDs, setShowDs] = useState(false);
@@ -386,9 +514,12 @@ function Layout({profile, nav, page, setPage, onLogout, accent='red', extraHeade
           </div>
         ))}
       </nav>
-      <button onClick={onLogout} className="m-2 flex items-center gap-2 px-3 py-2 text-xs text-white/30 hover:text-white/60 hover:bg-white/5 rounded-lg transition-colors">
-        🚪 Abmelden
-      </button>
+      <div className="mx-2 mb-1 flex items-center justify-between">
+        <button onClick={onLogout} className="flex items-center gap-2 px-3 py-2 text-xs text-white/30 hover:text-white/60 hover:bg-white/5 rounded-lg transition-colors flex-1">
+          🚪 Abmelden
+        </button>
+        <NotificationBell profile={profile}/>
+      </div>
       <button onClick={()=>setShowDs(true)} className="mx-2 mb-2 flex items-center gap-2 px-3 py-1.5 text-xs text-white/20 hover:text-white/50 hover:bg-white/5 rounded-lg transition-colors">
         🔒 Datenschutz
       </button>
@@ -411,7 +542,10 @@ function Layout({profile, nav, page, setPage, onLogout, accent='red', extraHeade
         {/* Mobile header */}
         <div className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
           <button onClick={()=>setMobileOpen(true)} className="text-gray-700 text-xl font-bold">☰</button>
-          <span className="text-sm font-bold text-gray-900">⚽ KickCoach</span>
+          <span className="text-sm font-bold text-gray-900 flex-1">⚽ KickCoach</span>
+          <div className="relative">
+            <NotificationBell profile={profile}/>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">{children}</div>
       </main>
@@ -702,8 +836,10 @@ function TrainerTraining({profile, show}) {
       await col('sessions').doc(editing).update({...form});
       show('Trainingseinheit aktualisiert ✅');
     } else {
-      await col('sessions').add({...form, teamId:profile.teamId, createdAt:ts()});
+      const ref = await col('sessions').add({...form, teamId:profile.teamId, createdAt:ts()});
       show('Trainingseinheit gespeichert ✅');
+      // E-Mail-Benachrichtigung (im Hintergrund, kein await um UI nicht zu blockieren)
+      notifyNewTraining({...form, teamId:profile.teamId, id:ref.id}).catch(()=>{});
     }
     setForm(EMPTY); setOpen(false); setEditing(null);
   };
@@ -1788,8 +1924,9 @@ function TrainerSpiele({profile, show}) {
       await col('games').doc(editing).update(form);
       show('Spiel aktualisiert ✅');
     } else {
-      await col('games').add({...form, teamId:profile.teamId, lineup:[], createdAt:ts()});
+      const ref = await col('games').add({...form, teamId:profile.teamId, lineup:[], createdAt:ts()});
       show('Spiel eingetragen ✅');
+      notifyNewGame({...form, teamId:profile.teamId, id:ref.id}).catch(()=>{});
     }
     setForm(EMPTY_G); setOpen(false); setEditing(null);
   };
@@ -2636,41 +2773,133 @@ function PlayerWellness({profile}) {
 //  SPIELER — STATS
 // ═══════════════════════════════════════════════════════════════════
 function PlayerStats({profile}) {
-  const [ratings, setRatings] = useState([]);
-  useEffect(()=>{ return col('ratings').where('playerId','==',profile.id).onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.createdAt?.seconds-a.createdAt?.seconds))); },[]);
+  const [ratings,        setRatings]        = useState([]);
+  const [gameRsvps,      setGameRsvps]      = useState([]);
+  const [games,          setGames]          = useState([]);
+  const [trainingAtt,    setTrainingAtt]    = useState([]);
+  const [sessions,       setSessions]       = useState([]);
 
+  useEffect(()=>{
+    const u1 = col('ratings').where('playerId','==',profile.id)
+      .onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.createdAt?.seconds-a.createdAt?.seconds)));
+    const u2 = col('gameAttendance').where('userId','==',profile.id)
+      .onSnapshot(s=>setGameRsvps(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3 = col('games').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u4 = col('attendance').where('userId','==',profile.id)
+      .onSnapshot(s=>setTrainingAtt(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u5 = col('sessions').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setSessions(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();u3();u4();u5();};
+  },[]);
+
+  // Spiel-Statistik
+  const totalGames   = games.length;
+  const gYes   = gameRsvps.filter(r=>r.status==='yes').length;
+  const gNo    = gameRsvps.filter(r=>r.status==='no').length;
+  const gMaybe = gameRsvps.filter(r=>r.status==='maybe').length;
+  const gNone  = totalGames - gameRsvps.length;
+  const gRate  = totalGames>0 ? Math.round((gYes/totalGames)*100) : null;
+
+  // Training-Statistik
+  const totalSessions   = sessions.length;
+  const tYes   = trainingAtt.filter(a=>a.status==='yes').length;
+  const tNo    = trainingAtt.filter(a=>a.status==='no').length;
+  const tMaybe = trainingAtt.filter(a=>a.status==='maybe').length;
+  const tNone  = totalSessions - trainingAtt.length;
+  const tRate  = totalSessions>0 ? Math.round((tYes/totalSessions)*100) : null;
+
+  // Trainer-Bewertungen
   const avg = ratings.length>0 ? (ratings.reduce((s,r)=>s+r.avg,0)/ratings.length).toFixed(2) : null;
   const catAvgs = RATING_CATS.map(cat=>({cat,val:ratings.length>0?(ratings.reduce((s,r)=>s+(r.scores?.[cat]||0),0)/ratings.length).toFixed(1):null}));
 
+  const StatBar = ({pct, color='bg-red-500'}) => (
+    <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+      <div className={`h-full ${color} rounded-full transition-all`} style={{width:`${pct}%`}}/>
+    </div>
+  );
+
+  const BigNum = ({value, label, sub, color='text-red-600'}) => (
+    <div className="flex-1 text-center">
+      <div className={`text-3xl font-bold ${color}`}>{value??'—'}</div>
+      <div className="text-xs font-semibold text-gray-700 mt-0.5">{label}</div>
+      {sub && <div className="text-[10px] text-gray-400">{sub}</div>}
+    </div>
+  );
+
   return (
-    <div className="p-4">
-      <h1 className="text-lg font-semibold mb-4">Meine Stats</h1>
-      {ratings.length===0 ? <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📊</div><p className="text-sm">Noch keine Beurteilungen vom Trainer.</p></div> : (
-        <div className="space-y-4">
-          <div className="bg-white border border-gray-200 rounded-2xl p-5 text-center">
-            <div className="text-5xl font-bold text-red-600">{avg}</div>
-            <div className="text-sm text-gray-500 mt-1">Gesamtschnitt / 5</div>
-            <div className="text-xs text-gray-400">{ratings.length} Beurteilung{ratings.length!==1?'en':''}</div>
+    <div className="p-4 space-y-4">
+      <h1 className="text-lg font-semibold">📊 Meine Statistiken</h1>
+
+      {/* ── SPIELTAGE ── */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4">
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">⚽ Spieltage</div>
+        <div className="flex gap-2 mb-4">
+          <BigNum value={gYes}   label="Zugesagt"  color="text-green-600"/>
+          <BigNum value={gNo}    label="Abgesagt"  color="text-red-500"/>
+          <BigNum value={gMaybe} label="Vielleicht" color="text-amber-500"/>
+          <BigNum value={gNone}  label="Offen"     color="text-gray-400"/>
+        </div>
+        {gRate !== null && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 w-20">Zusagequote</span>
+            <StatBar pct={gRate} color="bg-green-500"/>
+            <span className="text-xs font-bold text-gray-700 w-8 text-right">{gRate}%</span>
           </div>
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Nach Kategorie</div>
-            {catAvgs.map(({cat,val})=>(
-              <div key={cat} className="flex items-center gap-3 mb-2.5">
-                <div className="w-20 text-sm text-gray-600">{cat}</div>
-                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-red-500 rounded-full transition-all" style={{width:`${(val/5)*100}%`}}/></div>
-                <div className="text-sm font-bold text-gray-800 w-6 text-right">{val}</div>
+        )}
+        <div className="text-[11px] text-gray-400 mt-2">{totalGames} Spieltage insgesamt</div>
+      </div>
+
+      {/* ── TRAININGS ── */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4">
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">🏃 Training</div>
+        <div className="flex gap-2 mb-4">
+          <BigNum value={tYes}   label="Zugesagt"  color="text-green-600"/>
+          <BigNum value={tNo}    label="Abgesagt"  color="text-red-500"/>
+          <BigNum value={tMaybe} label="Vielleicht" color="text-amber-500"/>
+          <BigNum value={tNone}  label="Offen"     color="text-gray-400"/>
+        </div>
+        {tRate !== null && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 w-20">Anwesenheit</span>
+            <StatBar pct={tRate} color="bg-blue-500"/>
+            <span className="text-xs font-bold text-gray-700 w-8 text-right">{tRate}%</span>
+          </div>
+        )}
+        <div className="text-[11px] text-gray-400 mt-2">{totalSessions} Trainingseinheiten insgesamt</div>
+      </div>
+
+      {/* ── TRAINER-BEWERTUNGEN ── */}
+      {ratings.length>0 && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4">
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">⭐ Trainer-Bewertungen</div>
+          <div className="text-center mb-4">
+            <div className="text-4xl font-bold text-red-600">{avg}</div>
+            <div className="text-xs text-gray-400 mt-1">{ratings.length} Beurteilung{ratings.length!==1?'en':''} · Schnitt /5</div>
+          </div>
+          {catAvgs.map(({cat,val})=>(
+            <div key={cat} className="flex items-center gap-3 mb-2">
+              <div className="w-20 text-xs text-gray-600">{cat}</div>
+              <StatBar pct={(val/5)*100}/>
+              <div className="text-xs font-bold text-gray-800 w-6 text-right">{val}</div>
+            </div>
+          ))}
+          <div className="mt-3 border-t border-gray-100 pt-3 space-y-1">
+            {ratings.slice(0,5).map(r=>(
+              <div key={r.id} className="flex justify-between items-center text-xs">
+                <span className="text-gray-500">{r.date}</span>
+                {r.notes&&<span className="text-gray-400 italic truncate mx-2 flex-1">{r.notes}</span>}
+                <span className="font-bold text-red-600">{r.avg}/5</span>
               </div>
             ))}
           </div>
-          <div>
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Verlauf</div>
-            {ratings.map(r=>(
-              <div key={r.id} className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex justify-between items-center mb-1.5">
-                <div><div className="text-sm text-gray-700">{r.date}</div>{r.notes&&<div className="text-xs text-gray-400 italic">{r.notes}</div>}</div>
-                <div className="text-lg font-bold text-red-600">{r.avg}</div>
-              </div>
-            ))}
-          </div>
+        </div>
+      )}
+
+      {ratings.length===0 && totalGames===0 && totalSessions===0 && (
+        <div className="text-center text-gray-400 py-16">
+          <div className="text-4xl mb-2">📊</div>
+          <p className="text-sm">Noch keine Daten vorhanden.</p>
         </div>
       )}
     </div>
@@ -3117,7 +3346,9 @@ function AdminPinnwand({profile, show}) {
   const add = async (e) => {
     e.preventDefault();
     await col('news').add({...form,authorId:profile.id,authorName:profile.name,createdAt:ts()});
-    show('News veröffentlicht ✅'); setForm({title:'',content:'',category:'Allgemein'}); setOpen(false);
+    show('News veröffentlicht ✅');
+    notifyAnnouncement(form.title, form.content).catch(()=>{});
+    setForm({title:'',content:'',category:'Allgemein'}); setOpen(false);
   };
 
   const del = async (id) => { if(!confirm('News löschen?')) return; await col('news').doc(id).delete(); show('Gelöscht'); };
@@ -5957,6 +6188,104 @@ function AdminAufgaben({profile, show}) {
 // ═══════════════════════════════════════════════════════════════════
 //  ADMIN APP
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  EMAIL EINSTELLUNGEN (Vorstand)
+// ═══════════════════════════════════════════════════════════════════
+function EmailSettings({show}) {
+  const EMPTY = {publicKey:'', serviceId:'', tplTraining:'', tplSpiel:'', tplAnnouncement:''};
+  const [form, setForm] = useState(EMPTY);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [tested, setTested] = useState(null);
+
+  useEffect(()=>{
+    col('config').doc('emailjs').get().then(snap=>{
+      if(snap.exists) setForm({...EMPTY,...snap.data()});
+      setLoading(false);
+    });
+  },[]);
+
+  const save = async (e) => {
+    e.preventDefault(); setSaving(true);
+    await col('config').doc('emailjs').set(form, {merge:true});
+    _ejsConfig = null; // Cache zurücksetzen
+    show('E-Mail Einstellungen gespeichert ✅');
+    setSaving(false);
+  };
+
+  const testEmail = async () => {
+    setTested(null);
+    const cfg = await getEmailConfig();
+    if (!cfg?.publicKey || !cfg?.serviceId || !cfg?.tplAnnouncement) {
+      setTested('error'); return;
+    }
+    try {
+      const user = firebase.auth().currentUser;
+      await emailjs.send(cfg.serviceId, cfg.tplAnnouncement, {
+        to_email: user.email,
+        ankuendigung_titel: '✅ Test-E-Mail von KickCoach',
+        ankuendigung_text: 'EmailJS ist korrekt eingerichtet! Benachrichtigungen funktionieren.',
+        absender: 'KickCoach System',
+      }, cfg.publicKey);
+      setTested('ok');
+    } catch(e) { setTested('error'); }
+  };
+
+  const Inp2 = ({label, field, placeholder=''}) => (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <input value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))}
+        placeholder={placeholder}
+        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+    </div>
+  );
+
+  if (loading) return <Spinner/>;
+
+  return (
+    <div className="p-4 max-w-xl">
+      <h1 className="text-lg font-semibold mb-1">✉️ E-Mail Benachrichtigungen</h1>
+      <p className="text-xs text-gray-400 mb-4">Träge hier deine EmailJS-Zugangsdaten ein. Einmalig einrichten — danach laufen Benachrichtigungen automatisch.</p>
+
+      {/* Setup-Anleitung */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4 text-xs text-blue-800 space-y-1">
+        <div className="font-semibold mb-1">📋 Schnell-Anleitung EmailJS (5 Minuten):</div>
+        <div>1. Konto erstellen auf <span className="font-mono bg-blue-100 px-1 rounded">emailjs.com</span> (kostenlos)</div>
+        <div>2. <strong>Email Services</strong> → Gmail / Outlook verbinden → Service ID notieren</div>
+        <div>3. <strong>Email Templates</strong> → 3 Templates anlegen (Training, Spiel, Ankündigung)</div>
+        <div>4. <strong>Account → API Keys</strong> → Public Key kopieren</div>
+        <div className="mt-1 font-semibold">Template-Variablen für jedes Template:</div>
+        <div className="font-mono bg-blue-100 rounded p-1.5 text-[11px] leading-relaxed">
+          To Email: {'{{to_email}}'}<br/>
+          Training: {'{{training_datum}}'} {'{{training_zeit}}'} {'{{training_ort}}'} {'{{training_notizen}}'}<br/>
+          Spiel: {'{{spiel_gegner}}'} {'{{spiel_datum}}'} {'{{spiel_anstoss}}'} {'{{spiel_treffzeit}}'} {'{{spiel_treffpunkt}}'} {'{{spiel_trikot}}'}<br/>
+          Ankündigung: {'{{ankuendigung_titel}}'} {'{{ankuendigung_text}}'}<br/>
+          Alle Templates: {'{{absender}}'}
+        </div>
+      </div>
+
+      <form onSubmit={save} className="space-y-3">
+        <Inp2 label="Public Key" field="publicKey" placeholder="user_xxxxxxxxxxxxxx"/>
+        <Inp2 label="Service ID" field="serviceId" placeholder="service_xxxxxxx"/>
+        <div className="border-t border-gray-100 pt-3">
+          <div className="text-xs font-semibold text-gray-500 mb-2">Template IDs</div>
+          <div className="space-y-2">
+            <Inp2 label="🏃 Training Template ID" field="tplTraining" placeholder="template_xxxxxxx"/>
+            <Inp2 label="⚽ Spiel Template ID" field="tplSpiel" placeholder="template_xxxxxxx"/>
+            <Inp2 label="📢 Ankündigung Template ID" field="tplAnnouncement" placeholder="template_xxxxxxx"/>
+          </div>
+        </div>
+        <div className="flex gap-2 pt-2">
+          <Btn type="submit" className="flex-1" disabled={saving}>{saving ? 'Speichert…' : 'Speichern'}</Btn>
+          <Btn type="button" variant="secondary" onClick={testEmail}>Test senden</Btn>
+        </div>
+        {tested==='ok' && <div className="text-xs text-green-600 bg-green-50 rounded-lg px-3 py-2">✅ Test-E-Mail gesendet! Prüfe dein Postfach.</div>}
+        {tested==='error' && <div className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">❌ Fehler — prüfe Public Key, Service ID und Template ID für Ankündigungen.</div>}
+      </form>
+    </div>
+  );
+}
+
 function AdminApp({profile}) {
   const [page, setPage] = useState('overview');
   const {show, Container} = useToast();
@@ -5982,6 +6311,9 @@ function AdminApp({profile}) {
       {id:'sponsoren',     icon:'🤝',  label:'Sponsoren'},
       {id:'aufgaben',      icon:'📋',  label:'Aufgaben'},
     ]},
+    {section:'Einstellungen', items:[
+      {id:'emailSettings', icon:'✉️',  label:'E-Mail Setup'},
+    ]},
   ];
 
   const content = {
@@ -5999,6 +6331,7 @@ function AdminApp({profile}) {
     platz:              <AdminPlatzverwaltung profile={profile} show={show}/>,
     sponsoren:          <AdminSponsoren show={show}/>,
     aufgaben:           <AdminAufgaben profile={profile} show={show}/>,
+    emailSettings:      <EmailSettings show={show}/>,
   };
 
   return (
