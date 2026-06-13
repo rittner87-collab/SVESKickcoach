@@ -2158,6 +2158,18 @@ function TrainerSpiele({profile, show}) {
               <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setFeedbackPlayer(null)}>Abbrechen</Btn>
               <Btn type="submit" className="flex-1" disabled={fbSaving}>{fbSaving?'Speichert…':'Speichern'}</Btn>
             </div>
+            {gameRatings.find(r=>r.playerId===feedbackPlayer?.id) && (
+              <button type="button"
+                onClick={async()=>{
+                  if(!window.confirm('Feedback für '+feedbackPlayer.name+' wirklich löschen?')) return;
+                  const r = gameRatings.find(x=>x.playerId===feedbackPlayer.id);
+                  if(r) { await col('ratings').doc(r.id).delete(); show('Feedback gelöscht'); }
+                  setFeedbackPlayer(null);
+                }}
+                className="mt-2 w-full text-xs text-red-500 hover:text-red-700 py-1.5 rounded-lg hover:bg-red-50 transition-colors">
+                🗑 Feedback löschen
+              </button>
+            )}
           </form>
         </Modal>
       )}
@@ -2327,6 +2339,211 @@ function TrainerVerletzungen({profile, show}) {
 //  TRAINER — BEURTEILUNGEN
 // ═══════════════════════════════════════════════════════════════════
 const RATING_CATS = ['Technik','Ausdauer','Taktik','Einsatz','Teamgeist'];
+
+// ═══════════════════════════════════════════════════════════════════
+//  TRAINER — SPIELER-STATISTIK
+// ═══════════════════════════════════════════════════════════════════
+function TrainerSpielerStatistik({profile}) {
+  const [players,    setPlayers]    = useState([]);
+  const [sessions,   setSessions]   = useState([]);
+  const [attendance, setAttendance] = useState([]);
+  const [games,      setGames]      = useState([]);
+  const [gameAtt,    setGameAtt]    = useState([]);
+  const [selected,   setSelected]   = useState(null); // player detail
+
+  useEffect(()=>{
+    const u1 = col('users').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='player'||p.role==='dual').sort((a,b)=>a.name?.localeCompare(b.name||''))));
+    const u2 = col('sessions').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setSessions(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3 = col('attendance').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setAttendance(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u4 = col('games').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u5 = col('gameAttendance').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setGameAtt(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();u3();u4();u5();};
+  },[]);
+
+  const statsFor = (p) => {
+    const pAtt  = attendance.filter(a=>a.userId===p.id);
+    const tYes  = pAtt.filter(a=>a.status==='yes'||a.status==='attend').length;
+    const tNo   = pAtt.filter(a=>a.status==='no'||a.status==='cancel').length;
+    const tMaybe= pAtt.filter(a=>a.status==='maybe'||a.status==='unsure').length;
+    const tTotal= sessions.length;
+    const tRate = tTotal>0 ? Math.round((tYes/tTotal)*100) : null;
+
+    const pGame = gameAtt.filter(a=>a.userId===p.id);
+    const gYes  = pGame.filter(a=>a.status==='yes').length;
+    const gNo   = pGame.filter(a=>a.status==='no').length;
+    const gMaybe= pGame.filter(a=>a.status==='maybe').length;
+    const gTotal= games.length;
+    const gRate = gTotal>0 ? Math.round((gYes/gTotal)*100) : null;
+
+    return {tYes,tNo,tMaybe,tTotal,tRate,gYes,gNo,gMaybe,gTotal,gRate};
+  };
+
+  const MiniBar = ({pct, color='bg-red-500'}) => (
+    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+      <div className={`h-full ${color} rounded-full`} style={{width:`${pct||0}%`}}/>
+    </div>
+  );
+
+  // Detail-Modal für einzelnen Spieler
+  const DetailModal = ({p}) => {
+    const s = statsFor(p);
+    const pAtt  = attendance.filter(a=>a.userId===p.id);
+    const pGame = gameAtt.filter(a=>a.userId===p.id);
+
+    // letzte 5 Trainings
+    const lastSessions = [...sessions].sort((a,b)=>b.date?.localeCompare(a.date||'')).slice(0,8);
+    const lastGames    = [...games].sort((a,b)=>b.date?.localeCompare(a.date||'')).slice(0,8);
+
+    const tIcon = (sessionId) => {
+      const a = pAtt.find(x=>x.sessionId===sessionId);
+      if(!a) return <span className="text-gray-200">—</span>;
+      if(a.status==='yes'||a.status==='attend') return <span className="text-green-500">✓</span>;
+      if(a.status==='no'||a.status==='cancel')  return <span className="text-red-500">✗</span>;
+      return <span className="text-amber-400">?</span>;
+    };
+    const gIcon = (gameId) => {
+      const a = pGame.find(x=>x.gameId===gameId);
+      if(!a) return <span className="text-gray-200">—</span>;
+      if(a.status==='yes')   return <span className="text-green-500">✓</span>;
+      if(a.status==='no')    return <span className="text-red-500">✗</span>;
+      return <span className="text-amber-400">?</span>;
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={()=>setSelected(null)}>
+        <div className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl" onClick={e=>e.stopPropagation()}>
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+              {p.number||initials(p.name)}
+            </div>
+            <div className="flex-1">
+              <div className="font-bold">{p.name}</div>
+              <div className="text-xs text-gray-400">{p.position||'Spieler'}</div>
+            </div>
+            <button onClick={()=>setSelected(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500">✕</button>
+          </div>
+          <div className="overflow-y-auto flex-1 p-5 space-y-5">
+            {/* Zahlen-Übersicht */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-blue-600">{s.tYes}</div>
+                <div className="text-[10px] text-blue-500 font-semibold mt-0.5">Training zugesagt</div>
+                <div className="text-[10px] text-blue-400">von {s.tTotal} Einheiten</div>
+                {s.tRate!==null && <div className="text-xs font-bold text-blue-600 mt-1">{s.tRate}%</div>}
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-green-600">{s.gYes}</div>
+                <div className="text-[10px] text-green-500 font-semibold mt-0.5">Spiel zugesagt</div>
+                <div className="text-[10px] text-green-400">von {s.gTotal} Spielen</div>
+                {s.gRate!==null && <div className="text-xs font-bold text-green-600 mt-1">{s.gRate}%</div>}
+              </div>
+            </div>
+
+            {/* Letzte Trainings */}
+            {lastSessions.length>0 && (
+              <div>
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">🏃 Letzte Trainings</div>
+                <div className="space-y-1.5">
+                  {lastSessions.map(se=>(
+                    <div key={se.id} className="flex items-center gap-3 text-sm">
+                      <div className="w-5 text-center text-base">{tIcon(se.id)}</div>
+                      <div className="flex-1 text-xs text-gray-600">{fmtDate(se.date)}{se.time?' · '+se.time+' Uhr':''}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Letzte Spiele */}
+            {lastGames.length>0 && (
+              <div>
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">⚽ Letzte Spiele</div>
+                <div className="space-y-1.5">
+                  {lastGames.map(g=>(
+                    <div key={g.id} className="flex items-center gap-3 text-sm">
+                      <div className="w-5 text-center text-base">{gIcon(g.id)}</div>
+                      <div className="flex-1 text-xs text-gray-600">vs. {g.opponent} · {fmtDate(g.date)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-1">📊 Spieler-Statistik</h1>
+      <p className="text-xs text-gray-400 mb-4">{sessions.length} Trainings · {games.length} Spiele</p>
+
+      {players.length===0 ? (
+        <div className="text-center text-gray-400 py-16">
+          <div className="text-4xl mb-2">📊</div>
+          <p className="text-sm">Noch keine Spieler im Team.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Spalten-Header */}
+          <div className="flex items-center gap-2 px-1 pb-1 border-b border-gray-100">
+            <div className="flex-1 text-[10px] text-gray-400 font-semibold uppercase">Spieler</div>
+            <div className="w-24 text-center text-[10px] text-gray-400 font-semibold uppercase">🏃 Training</div>
+            <div className="w-24 text-center text-[10px] text-gray-400 font-semibold uppercase">⚽ Spiel</div>
+          </div>
+
+          {players.map(p=>{
+            const s = statsFor(p);
+            return (
+              <button key={p.id} onClick={()=>setSelected(p)}
+                className="w-full bg-white border border-gray-200 rounded-xl p-3 flex items-center gap-3 text-left hover:border-red-300 transition-colors">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+                  {p.number||initials(p.name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate">{p.name}</div>
+                  <div className="text-[10px] text-gray-400">{p.position||''}</div>
+                </div>
+                {/* Training */}
+                <div className="w-24 flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <MiniBar pct={s.tRate} color="bg-blue-500"/>
+                    <span className="text-[10px] font-bold text-blue-600 w-7 text-right">{s.tYes}/{s.tTotal}</span>
+                  </div>
+                  <div className="flex gap-1 justify-end">
+                    <span className="text-[9px] text-green-600">✓{s.tYes}</span>
+                    <span className="text-[9px] text-red-500">✗{s.tNo}</span>
+                    <span className="text-[9px] text-amber-500">?{s.tMaybe}</span>
+                  </div>
+                </div>
+                {/* Spiel */}
+                <div className="w-24 flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <MiniBar pct={s.gRate} color="bg-green-500"/>
+                    <span className="text-[10px] font-bold text-green-600 w-7 text-right">{s.gYes}/{s.gTotal}</span>
+                  </div>
+                  <div className="flex gap-1 justify-end">
+                    <span className="text-[9px] text-green-600">✓{s.gYes}</span>
+                    <span className="text-[9px] text-red-500">✗{s.gNo}</span>
+                    <span className="text-[9px] text-amber-500">?{s.gMaybe}</span>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {selected && <DetailModal p={selected}/>}
+    </div>
+  );
+}
 
 function TrainerBeurteilungen({profile, show}) {
   const [players, setPlayers] = useState([]);
@@ -2546,7 +2763,7 @@ function TrainerApp({profile}) {
   const nav = [
     {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
-    {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+    {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
     {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
     {section:'Konto',   items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
@@ -2587,6 +2804,7 @@ function TrainerApp({profile}) {
     dokumente:          <TrainerDokumente/>,
     vorstand:           <TrainerNachrichtAnVorstand profile={profile}/>,
     benachrichtigungen: <TrainerBenachrichtigungen profile={profile}/>,
+    spielerstats:       <TrainerSpielerStatistik profile={activeProfile}/>,
     profil:             <ProfilPage profile={profile}/>,
   };
 
@@ -2993,11 +3211,11 @@ function PlayerStats({profile}) {
   const gNone  = totalGames - gameRsvps.length;
   const gRate  = totalGames>0 ? Math.round((gYes/totalGames)*100) : null;
 
-  // Training-Statistik
+  // Training-Statistik (Spieler nutzt 'attend'/'cancel'/'unsure', Trainer 'yes'/'no'/'maybe')
   const totalSessions   = sessions.length;
-  const tYes   = trainingAtt.filter(a=>a.status==='yes').length;
-  const tNo    = trainingAtt.filter(a=>a.status==='no').length;
-  const tMaybe = trainingAtt.filter(a=>a.status==='maybe').length;
+  const tYes   = trainingAtt.filter(a=>a.status==='yes'||a.status==='attend').length;
+  const tNo    = trainingAtt.filter(a=>a.status==='no'||a.status==='cancel').length;
+  const tMaybe = trainingAtt.filter(a=>a.status==='maybe'||a.status==='unsure').length;
   const tNone  = totalSessions - trainingAtt.length;
   const tRate  = totalSessions>0 ? Math.round((tYes/totalSessions)*100) : null;
 
@@ -6740,7 +6958,7 @@ function DualApp({profile}) {
   const trainerNav = [
     {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
     {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
-    {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+    {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
     {section:'Konto',    items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
   const playerNav = [{section:'', items:[
@@ -6772,6 +6990,7 @@ function DualApp({profile}) {
     uebungen: <UebungenDB profile={trainerProfile} show={show}/>,
     verletzungen: <TrainerVerletzungen profile={trainerProfile} show={show}/>,
     beurteilungen: <TrainerBeurteilungen profile={trainerProfile} show={show}/>,
+    spielerstats:  <TrainerSpielerStatistik profile={trainerProfile}/>,
     chat: <ChatPage profile={trainerProfile}/>,
     profil: <ProfilPage profile={profile}/>,
   };
