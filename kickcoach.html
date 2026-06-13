@@ -1899,8 +1899,13 @@ function TrainerSpiele({profile, show}) {
   const [form,       setForm]       = useState(EMPTY_G);
   const [delGame,    setDelGame]    = useState(null);
   const [lineup,     setLineup]     = useState(null);
-  const [detailGame, setDetailGame] = useState(null); // game for RSVP detail view
-  const [gameRsvp,   setGameRsvp]   = useState([]);   // gameAttendance docs for detailGame
+  const [detailGame,  setDetailGame]  = useState(null);
+  const [gameRsvp,    setGameRsvp]    = useState([]);
+  const [gameRatings, setGameRatings] = useState([]); // Bewertungen für detailGame
+  const [feedbackPlayer, setFeedbackPlayer] = useState(null); // {id, name} — Spieler wird gerade bewertet
+  const [fbScores,    setFbScores]    = useState({Technik:3,Ausdauer:3,Taktik:3,Einsatz:3,Teamgeist:3});
+  const [fbNotes,     setFbNotes]     = useState('');
+  const [fbSaving,    setFbSaving]    = useState(false);
 
   useEffect(()=>{
     const u1=col('games').where('teamId','==',profile.teamId).onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.date?.localeCompare(a.date||''))));
@@ -1908,12 +1913,39 @@ function TrainerSpiele({profile, show}) {
     return ()=>{u1();u2();};
   },[]);
 
-  // Lade RSVP wenn detailGame sich ändert
   useEffect(()=>{
     if(!detailGame) return;
-    return col('gameAttendance').where('gameId','==',detailGame.id)
+    const u1 = col('gameAttendance').where('gameId','==',detailGame.id)
       .onSnapshot(s=>setGameRsvp(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2 = col('ratings').where('gameId','==',detailGame.id)
+      .onSnapshot(s=>setGameRatings(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();};
   },[detailGame?.id]);
+
+  const openFeedback = (player) => {
+    const existing = gameRatings.find(r=>r.playerId===player.id);
+    setFbScores(existing?.scores || {Technik:3,Ausdauer:3,Taktik:3,Einsatz:3,Teamgeist:3});
+    setFbNotes(existing?.notes || '');
+    setFeedbackPlayer(player);
+  };
+
+  const saveFeedback = async (e) => {
+    e.preventDefault(); if(!feedbackPlayer||!detailGame) return;
+    setFbSaving(true);
+    const avg = (Object.values(fbScores).reduce((a,b)=>a+b,0)/RATING_CATS.length).toFixed(1);
+    const data = {
+      playerId: feedbackPlayer.id, playerName: feedbackPlayer.name,
+      teamId: profile.teamId, gameId: detailGame.id,
+      gameOpponent: detailGame.opponent||'', gameDate: detailGame.date||'',
+      scores: fbScores, avg: Number(avg), notes: fbNotes,
+      type: 'game', trainerName: profile.name, createdAt: ts(),
+    };
+    const existing = gameRatings.find(r=>r.playerId===feedbackPlayer.id);
+    if(existing) await col('ratings').doc(existing.id).update(data);
+    else         await col('ratings').add(data);
+    show('Feedback gespeichert ✅');
+    setFeedbackPlayer(null); setFbSaving(false);
+  };
 
   const openNew  = () => { setEditing(null); setForm(EMPTY_G); setOpen(true); };
   const openEdit = (g) => { setEditing(g.id); setForm({date:g.date||'',time:g.time||'15:00',treffzeit:g.treffzeit||'',treffpunkt:g.treffpunkt||'',trikot:g.trikot||'',opponent:g.opponent||'',location:g.location||'',home:!!g.home,scoreHome:g.scoreHome??'',scoreAway:g.scoreAway??'',besonderheiten:g.besonderheiten||''}); setOpen(true); };
@@ -2043,11 +2075,67 @@ function TrainerSpiele({profile, show}) {
                       </div>
                     </div>
                   )}
+
+                  {/* ── SPIELER-FEEDBACK ── */}
+                  <div>
+                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">⭐ Spieler-Feedback</div>
+                    <div className="space-y-2">
+                      {players.map(p=>{
+                        const r = gameRatings.find(x=>x.playerId===p.id);
+                        return (
+                          <div key={p.id} className="bg-gray-50 rounded-xl px-3 py-2.5 flex items-center gap-3">
+                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+                              {p.number||initials(p.name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs font-semibold truncate">{p.name}</div>
+                              {r ? (
+                                <div className="text-[11px] text-gray-500 mt-0.5">
+                                  Ø <span className="font-bold text-red-600">{r.avg}</span>/5
+                                  {r.notes && <span className="ml-1 text-gray-400 italic">· {r.notes.slice(0,40)}{r.notes.length>40?'…':''}</span>}
+                                </div>
+                              ) : <div className="text-[11px] text-gray-400">Noch kein Feedback</div>}
+                            </div>
+                            <button onClick={()=>openFeedback(p)}
+                              className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold flex-shrink-0 transition-colors ${r?'bg-red-100 text-red-700':'bg-gray-200 text-gray-600 hover:bg-red-100 hover:text-red-700'}`}>
+                              {r?'Bearbeiten':'Bewerten'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>);
               })()}
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── FEEDBACK-MODAL ── */}
+      {feedbackPlayer && (
+        <Modal title={`Feedback: ${feedbackPlayer.name}`} onClose={()=>setFeedbackPlayer(null)}>
+          <div className="text-xs text-gray-400 mb-3">vs. {detailGame?.opponent} · {fmtDate(detailGame?.date)}</div>
+          <form onSubmit={saveFeedback}>
+            <div className="space-y-3 mb-4">
+              {RATING_CATS.map(cat=>(
+                <div key={cat} className="flex items-center justify-between">
+                  <span className="text-sm text-gray-700 w-24">{cat}</span>
+                  <Stars value={fbScores[cat]} onChange={v=>setFbScores(s=>({...s,[cat]:v}))}/>
+                  <span className="text-sm font-bold text-red-600 w-6 text-right">{fbScores[cat]}</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-xs text-gray-400 text-right mb-3">
+              Ø {(Object.values(fbScores).reduce((a,b)=>a+b,0)/RATING_CATS.length).toFixed(1)}/5
+            </div>
+            <Txt label="Kommentar / Feedback" value={fbNotes} onChange={e=>setFbNotes(e.target.value)} rows={3} placeholder="z.B. Starke Leistung im Pressing, Pässe noch verbessern..."/>
+            <div className="flex gap-2">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setFeedbackPlayer(null)}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1" disabled={fbSaving}>{fbSaving?'Speichert…':'Speichern'}</Btn>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {open && (
@@ -2907,6 +2995,102 @@ function PlayerStats({profile}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  SPIELER — FEEDBACK (Trainer-Bewertungen zu Spielen)
+// ═══════════════════════════════════════════════════════════════════
+function PlayerFeedback({profile}) {
+  const [ratings, setRatings] = useState([]);
+  const [detail,  setDetail]  = useState(null);
+
+  useEffect(()=>{
+    return col('ratings').where('playerId','==',profile.id).where('type','==','game')
+      .orderBy('createdAt','desc')
+      .onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[]);
+
+  const StarRow = ({scores}) => (
+    <div className="flex gap-3 flex-wrap mt-1.5">
+      {RATING_CATS.map(cat=>(
+        <div key={cat} className="text-center">
+          <div className="text-sm font-bold text-red-600">{scores?.[cat]??'—'}</div>
+          <div className="text-[9px] text-gray-400">{cat.slice(0,3)}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-4">⭐ Trainer-Feedback</h1>
+
+      {ratings.length===0 ? (
+        <div className="text-center text-gray-400 py-16">
+          <div className="text-4xl mb-2">⭐</div>
+          <p className="text-sm">Noch kein Feedback vom Trainer.</p>
+          <p className="text-xs mt-1 text-gray-300">Feedback wird nach Spielen vergeben.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {ratings.map(r=>(
+            <button key={r.id} onClick={()=>setDetail(r)}
+              className="w-full bg-white border border-gray-200 rounded-2xl p-4 text-left hover:border-red-300 transition-colors">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-sm font-semibold">vs. {r.gameOpponent||'—'}</div>
+                <div className="text-xl font-bold text-red-600">{r.avg}/5</div>
+              </div>
+              <div className="text-xs text-gray-400">{fmtDate(r.gameDate)}{r.trainerName?' · '+r.trainerName:''}</div>
+              <StarRow scores={r.scores}/>
+              {r.notes && <p className="text-xs text-gray-500 italic mt-2 line-clamp-2">{r.notes}</p>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Detail-Modal */}
+      {detail && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={()=>setDetail(null)}>
+          <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl shadow-2xl" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <div className="font-bold">vs. {detail.gameOpponent||'—'}</div>
+                <div className="text-xs text-gray-400">{fmtDate(detail.gameDate)}{detail.trainerName?' · '+detail.trainerName:''}</div>
+              </div>
+              <button onClick={()=>setDetail(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500">✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              {/* Gesamt */}
+              <div className="text-center">
+                <div className="text-5xl font-bold text-red-600">{detail.avg}</div>
+                <div className="text-sm text-gray-400 mt-1">Gesamtbewertung / 5</div>
+              </div>
+              {/* Kategorien */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-2.5">
+                {RATING_CATS.map(cat=>(
+                  <div key={cat} className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-20">{cat}</span>
+                    <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-red-500 rounded-full" style={{width:`${((detail.scores?.[cat]||0)/5)*100}%`}}/>
+                    </div>
+                    <span className="text-sm font-bold text-gray-800 w-4 text-right">{detail.scores?.[cat]??'—'}</span>
+                  </div>
+                ))}
+              </div>
+              {/* Kommentar */}
+              {detail.notes && (
+                <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                  <div className="text-xs font-semibold text-blue-600 mb-1">💬 Kommentar</div>
+                  <p className="text-sm text-gray-700 leading-relaxed">{detail.notes}</p>
+                </div>
+              )}
+              <Btn className="w-full" onClick={()=>setDetail(null)}>Schließen</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  SPIELER — NEWS
 // ═══════════════════════════════════════════════════════════════════
 function PlayerNews() {
@@ -2944,17 +3128,19 @@ function PlayerApp({profile}) {
   const {show, Container} = useToast();
 
   const nav = [{section:'', items:[
-    {id:'training',icon:'📅',label:'Training'},
-    {id:'spiele',  icon:'🏆',label:'Spieltage'},
-    {id:'wellness',icon:'💪',label:'Wellness'},
-    {id:'stats',   icon:'📊',label:'Stats'},
-    {id:'chat',    icon:'💬',label:'Chat'},
-    {id:'news',    icon:'📢',label:'News'},
+    {id:'training', icon:'📅',label:'Training'},
+    {id:'spiele',   icon:'🏆',label:'Spieltage'},
+    {id:'feedback', icon:'⭐',label:'Feedback'},
+    {id:'wellness', icon:'💪',label:'Wellness'},
+    {id:'stats',    icon:'📊',label:'Stats'},
+    {id:'chat',     icon:'💬',label:'Chat'},
+    {id:'news',     icon:'📢',label:'News'},
   ]}];
 
   const content = {
     training: <PlayerTraining profile={profile}/>,
     spiele:   <PlayerSpiele profile={profile}/>,
+    feedback: <PlayerFeedback profile={profile}/>,
     wellness: <PlayerWellness profile={profile}/>,
     stats:    <PlayerStats profile={profile}/>,
     chat:     <ChatPage profile={profile} accent="red"/>,
