@@ -164,18 +164,8 @@ function LoginPage() {
   const [tab,    setTab]    = useState('login');
   const [email,  setEmail]  = useState('');
   const [pw,     setPw]     = useState('');
-  const [name,   setName]   = useState('');
-  const [role,   setRole]   = useState('player');
   const [loading,setLoading]= useState(false);
   const [msg,    setMsg]    = useState('');
-
-  const ROLES = [
-    {v:'player',           l:'Spieler',             icon:'⚽', desc:'Training, Wellness, Chat'},
-    {v:'trainer',          l:'Trainer',             icon:'📋', desc:'Kader, Training, Taktik'},
-    {v:'dual',             l:'Trainer & Spieler',   icon:'🔄', desc:'Zwei Teams, zwei Rollen'},
-    {v:'vorstand',         l:'Vorstand',            icon:'🏟️',desc:'Genehmigung erforderlich 🔒'},
-    {v:'vorstand_trainer', l:'Vorstand & Trainer',  icon:'🎯', desc:'Genehmigung erforderlich 🔒', wide:true},
-  ];
 
   const login = async (e) => {
     e.preventDefault(); setMsg(''); setLoading(true);
@@ -184,25 +174,12 @@ function LoginPage() {
     setLoading(false);
   };
 
+  // Nur Firebase Auth anlegen — Profil wird in CompleteProfile vervollständigt
   const register = async (e) => {
     e.preventDefault(); setMsg(''); setLoading(true);
     try {
-      const {user} = await auth.createUserWithEmailAndPassword(email, pw);
-      const existing = await col('users').limit(2).get();
-      const isFirst  = existing.docs.filter(d=>d.id!==user.uid).length === 0;
-      // Fester Vorstand-Account + erster Nutzer = immer Vorstand
-      const ADMIN_EMAIL = 'finanzmakler.rittner@gmail.com';
-      const isAdmin = isFirst || email.trim().toLowerCase() === ADMIN_EMAIL;
-      const finalRole = isAdmin ? 'vorstand' : role;
-      const needsApproval = !isAdmin && (finalRole === 'vorstand' || finalRole === 'vorstand_trainer');
-      await col('users').doc(user.uid).set({
-        name, email: email.trim().toLowerCase(),
-        role: finalRole,
-        status: needsApproval ? 'pending' : 'active',
-        teamId: '',           // Spieler-Team (nach Anmeldung gewählt)
-        trainerTeamId: '',    // Trainer-Team (nur bei dual)
-        color: randColor(), createdAt: ts()
-      });
+      await auth.createUserWithEmailAndPassword(email, pw);
+      // Kein Firestore-Dokument hier — CompleteProfile übernimmt das
     } catch(err) { setMsg(err.message); }
     setLoading(false);
   };
@@ -245,30 +222,6 @@ function LoginPage() {
         </div>
 
         <form onSubmit={tab==='login'?login:register} className="p-5 space-y-3">
-          {tab==='register' && (
-            <>
-              <div>
-                <label className={labelCls}>Vollständiger Name</label>
-                <input className={inputCls} value={name} onChange={e=>setName(e.target.value)} placeholder="Max Mustermann" required/>
-              </div>
-              <div>
-                <label className={labelCls}>Ich bin…</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {ROLES.map(r=>(
-                    <button key={r.v} type="button" onClick={()=>setRole(r.v)}
-                      className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-center transition-all ${r.wide?'col-span-2':''}`}
-                      style={role===r.v
-                        ? {borderColor:'#CC0000',background:'rgba(204,0,0,0.12)'}
-                        : {borderColor:'rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.03)'}}>
-                      <span className="text-lg">{r.icon}</span>
-                      <span className="text-xs font-semibold text-white">{r.l}</span>
-                      <span className="text-[9px] leading-tight" style={{color:'rgba(255,255,255,0.4)'}}>{r.desc}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
           <div>
             <label className={labelCls}>E-Mail</label>
             <input className={inputCls} type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@beispiel.de" required/>
@@ -277,7 +230,7 @@ function LoginPage() {
             <label className={labelCls}>Passwort</label>
             <input className={inputCls} type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••" required minLength={6}/>
           </div>
-          {tab==='register' && <p className="text-[11px]" style={{color:'rgba(255,255,255,0.3)'}}>Du wählst dein Team nach der Registrierung.</p>}
+          {tab==='register' && <p className="text-[11px]" style={{color:'rgba(255,255,255,0.3)'}}>Du wählst deine Rolle und deinen Namen im nächsten Schritt.</p>}
           {msg && <p className="text-xs rounded-xl px-4 py-2.5" style={{background:'rgba(204,0,0,0.15)',border:'1px solid rgba(204,0,0,0.3)',color:'#ff8080'}}>{msg}</p>}
           <button type="submit" disabled={loading}
             className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40"
@@ -881,15 +834,19 @@ const SessionCard = ({s, drillMap, att, faded=false, onDetail, onEdit, onDelete}
   </div>
 );
 
-function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, onClose, show}) {
-  const [saving,     setSaving]     = useState({});
-  const [uploading,  setUploading]  = useState(false);
-  const [uploadPct,  setUploadPct]  = useState(0);
-  const [files,      setFiles]      = useState(session.files||[]);
-  const [uploadErr,  setUploadErr]  = useState('');
+function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, onClose, show, readOnly=false}) {
+  const [saving,    setSaving]   = useState({});
+  const [media,     setMedia]    = useState([]);
+  const [uploading, setUploading]= useState(false);
+  const [uploadErr, setUploadErr]= useState('');
+  const [viewer,    setViewer]   = useState(null); // {name, type, data} inline viewer
   const fileRef = useRef();
 
-  useEffect(()=>setFiles(session.files||[]),[session.files]);
+  // Lade Anhänge aus Firestore-Subcollection (kein Firebase Storage nötig)
+  useEffect(()=>{
+    return col('sessionMedia').where('sessionId','==',session.id)
+      .onSnapshot(s=>setMedia(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[session.id]);
 
   const setStatus = async (player, status) => {
     setSaving(v=>({...v,[player.id]:true}));
@@ -897,49 +854,54 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
     setSaving(v=>({...v,[player.id]:false}));
   };
 
+  // Upload: Datei → Base64 → Firestore (max 700KB, kein Firebase Storage)
   const uploadFile = async (e) => {
     const file = e.target.files?.[0]; if(!file) return;
-    setUploading(true); setUploadPct(0); setUploadErr('');
-    try {
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
-      const path = `sessions/${session.id}/${Date.now()}_${safeName}`;
-      const ref  = storage.ref(path);
-      await new Promise((resolve, reject) => {
-        const task = ref.put(file);
-        task.on('state_changed',
-          snap => setUploadPct(Math.round(snap.bytesTransferred/snap.totalBytes*100)),
-          err  => reject(err),
-          ()   => resolve()
-        );
-      });
-      const url = await ref.getDownloadURL();
-      const meta = {name:file.name, url, path, type:file.type, uploadedAt:new Date().toISOString()};
-      await col('sessions').doc(session.id).update({
-        files: firebase.firestore.FieldValue.arrayUnion(meta)
-      });
-      setFiles(f=>[...f, meta]);
-      if(show) show('Datei hochgeladen ✅');
-    } catch(err){
-      console.error(err);
-      const msg = err.code==='storage/unauthorized'
-        ? 'Keine Berechtigung – bitte Firebase Storage-Regeln prüfen.'
-        : err.message||'Upload fehlgeschlagen';
-      setUploadErr(msg);
-      if(show) show(msg,'error');
+    if(file.size > 700*1024) {
+      setUploadErr(`Datei zu groß (${Math.round(file.size/1024)} KB). Maximal 700 KB erlaubt.`);
+      e.target.value=''; return;
     }
-    setUploading(false); setUploadPct(0);
+    setUploading(true); setUploadErr('');
+    try {
+      const data = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = ()=>res(r.result.split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      await col('sessionMedia').add({
+        sessionId: session.id,
+        teamId: session.teamId||'',
+        name: file.name,
+        type: file.type,
+        data,
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+      });
+      if(show) show('Datei hochgeladen ✅');
+    } catch(err){ setUploadErr(err.message||'Upload fehlgeschlagen'); }
+    setUploading(false);
     e.target.value='';
   };
 
-  const deleteFile = async (meta) => {
-    try {
-      await storage.ref(meta.path).delete();
-    } catch(_){}
-    await col('sessions').doc(session.id).update({
-      files: firebase.firestore.FieldValue.arrayRemove(meta)
-    });
-    setFiles(f=>f.filter(x=>x.path!==meta.path));
+  const deleteFile = async (m) => {
+    if(!window.confirm(`"${m.name}" wirklich löschen?`)) return;
+    await col('sessionMedia').doc(m.id).delete();
   };
+
+  // Inline-Viewer öffnen
+  const openViewer = (m) => setViewer(m);
+
+  // Base64 → Blob-URL für iframe (PDF)
+  const blobUrl = React.useMemo(()=>{
+    if(!viewer || !viewer.type.includes('pdf')) return null;
+    try {
+      const bytes = atob(viewer.data);
+      const arr = new Uint8Array(bytes.length);
+      for(let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
+      return URL.createObjectURL(new Blob([arr],{type:'application/pdf'}));
+    } catch(e){ return null; }
+  },[viewer]);
 
   const fileIcon = (type='') => {
     if(type.startsWith('image/')) return '🖼️';
@@ -948,6 +910,9 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
     return '📎';
   };
 
+  const images = media.filter(m=>m.type?.startsWith('image/'));
+  const docs   = media.filter(m=>!m.type?.startsWith('image/'));
+
   const STATUS_OPTS = [
     {v:'yes',   icon:'✅', on:'bg-green-600 text-white', off:'bg-gray-100 text-gray-500 hover:bg-green-50'},
     {v:'maybe', icon:'❓', on:'bg-amber-500 text-white', off:'bg-gray-100 text-gray-500 hover:bg-amber-50'},
@@ -955,6 +920,7 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
   ];
 
   return (
+    <>
     <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={onClose}>
       <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col shadow-2xl" onClick={e=>e.stopPropagation()}>
         {/* Header */}
@@ -964,50 +930,52 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
             <div className="text-xs text-gray-400">{session.duration} Min{session.location?' · '+session.location:''}</div>
           </div>
           <div className="flex gap-2">
-            <button onClick={()=>onEdit(session)} className="text-xs text-gray-500 hover:text-red-600 px-2 py-1.5 border border-gray-200 rounded-lg">✏️ Bearbeiten</button>
+            {!readOnly && <button onClick={()=>onEdit(session)} className="text-xs text-gray-500 hover:text-red-600 px-2 py-1.5 border border-gray-200 rounded-lg">✏️ Bearbeiten</button>}
             <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200">✕</button>
           </div>
         </div>
 
         <div className="overflow-y-auto flex-1 p-5 space-y-5">
-          {/* Rückmeldungen */}
-          <div>
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Rückmeldungen</div>
-            <div className="flex gap-3 mb-4">
-              <div className="flex-1 bg-green-50 border border-green-200 rounded-xl p-3 text-center">
-                <div className="text-2xl font-bold text-green-600">{att.yes}</div>
-                <div className="text-[10px] text-green-500 font-medium">Zusagen</div>
+          {/* Rückmeldungen — nur für Trainer */}
+          {!readOnly && (
+            <div>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Rückmeldungen</div>
+              <div className="flex gap-3 mb-4">
+                <div className="flex-1 bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                  <div className="text-2xl font-bold text-green-600">{att.yes}</div>
+                  <div className="text-[10px] text-green-500 font-medium">Zusagen</div>
+                </div>
+                <div className="flex-1 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                  <div className="text-2xl font-bold text-amber-500">{att.maybe}</div>
+                  <div className="text-[10px] text-amber-400 font-medium">Vielleicht</div>
+                </div>
+                <div className="flex-1 bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+                  <div className="text-2xl font-bold text-red-600">{att.no}</div>
+                  <div className="text-[10px] text-red-400 font-medium">Absagen</div>
+                </div>
               </div>
-              <div className="flex-1 bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
-                <div className="text-2xl font-bold text-amber-500">{att.maybe}</div>
-                <div className="text-[10px] text-amber-400 font-medium">Vielleicht</div>
-              </div>
-              <div className="flex-1 bg-red-50 border border-red-200 rounded-xl p-3 text-center">
-                <div className="text-2xl font-bold text-red-600">{att.no}</div>
-                <div className="text-[10px] text-red-400 font-medium">Absagen</div>
+              <div className="space-y-2">
+                {players.map(p=>{
+                  const cur = att.byPlayer?.[p.id]||null;
+                  return (
+                    <div key={p.id} className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
+                        {p.number||initials(p.name)}
+                      </div>
+                      <div className="flex-1 min-w-0"><div className="text-xs font-medium truncate">{p.name}</div></div>
+                      <div className="flex gap-1">
+                        {STATUS_OPTS.map(opt=>(
+                          <button key={opt.v} onClick={()=>setStatus(p,opt.v)} disabled={saving[p.id]}
+                            className={`text-[10px] px-2 py-1 rounded-lg font-medium transition-all ${cur===opt.v?opt.on:opt.off}`}>{opt.icon}</button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {players.length===0 && <p className="text-xs text-gray-400">Keine Spieler im Team.</p>}
               </div>
             </div>
-            <div className="space-y-2">
-              {players.map(p=>{
-                const cur = att.byPlayer?.[p.id]||null;
-                return (
-                  <div key={p.id} className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                      {p.number||initials(p.name)}
-                    </div>
-                    <div className="flex-1 min-w-0"><div className="text-xs font-medium truncate">{p.name}</div></div>
-                    <div className="flex gap-1">
-                      {STATUS_OPTS.map(opt=>(
-                        <button key={opt.v} onClick={()=>setStatus(p,opt.v)} disabled={saving[p.id]}
-                          className={`text-[10px] px-2 py-1 rounded-lg font-medium transition-all ${cur===opt.v?opt.on:opt.off}`}>{opt.icon}</button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-              {players.length===0 && <p className="text-xs text-gray-400">Keine Spieler im Team.</p>}
-            </div>
-          </div>
+          )}
 
           {/* Notizen */}
           {session.notes && (
@@ -1035,49 +1003,46 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
             </div>
           )}
 
-          {/* ── DATEIEN & BILDER ── */}
-          <div>
+          {/* ── ANHÄNGE — nur für Trainer sichtbar ── */}
+          {!readOnly && <div>
             <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Dateien & Bilder</div>
-              <button onClick={()=>fileRef.current?.click()}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50"
-                disabled={uploading}>
-                {uploading ? `⏳ ${uploadPct}%` : '📎 Hochladen'}
-              </button>
-              <input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
-                className="hidden" onChange={uploadFile}/>
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                Anhänge {media.length>0?`(${media.length})`:''}
+              </div>
+              {!readOnly && (
+                <>
+                  <button onClick={()=>fileRef.current?.click()} disabled={uploading}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-50">
+                    {uploading ? '⏳ Lädt…' : '📎 Hochladen'}
+                  </button>
+                  <input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.txt"
+                    className="hidden" onChange={uploadFile}/>
+                </>
+              )}
             </div>
 
-            {/* Upload-Fortschrittsbalken */}
-            {uploading && (
-              <div className="mb-3 bg-gray-100 rounded-full h-2 overflow-hidden">
-                <div className="h-2 bg-red-500 transition-all rounded-full" style={{width:`${uploadPct}%`}}/>
-              </div>
-            )}
-            {uploadErr && (
-              <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600">{uploadErr}</div>
-            )}
+            {uploadErr && <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600">{uploadErr}</div>}
 
-            {files.length===0 && !uploading && (
+            {media.length===0 && (
               <div className="text-center py-6 text-gray-300 text-sm border-2 border-dashed border-gray-200 rounded-xl">
-                Noch keine Dateien hochgeladen
+                {readOnly ? 'Keine Anhänge vorhanden' : 'Noch keine Dateien · max. 700 KB pro Datei'}
               </div>
             )}
 
-            {/* Bilder inline */}
-            {files.filter(f=>f.type?.startsWith('image/')).length>0 && (
+            {/* Bilder als Grid */}
+            {images.length>0 && (
               <div className="grid grid-cols-2 gap-2 mb-3">
-                {files.filter(f=>f.type?.startsWith('image/')).map((f,i)=>(
-                  <div key={i} className="relative rounded-xl overflow-hidden border border-gray-200 group">
-                    <img src={f.url} alt={f.name} className="w-full h-32 object-cover"/>
+                {images.map(m=>(
+                  <div key={m.id} className="relative rounded-xl overflow-hidden border border-gray-200 group cursor-pointer"
+                    onClick={()=>openViewer(m)}>
+                    <img src={`data:${m.type};base64,${m.data}`} alt={m.name} className="w-full h-32 object-cover"/>
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <a href={f.url} target="_blank" rel="noopener noreferrer"
-                        className="p-2 bg-white rounded-full text-gray-700 hover:text-blue-600 text-sm">🔍</a>
-                      <button onClick={()=>deleteFile(f)}
-                        className="p-2 bg-white rounded-full text-gray-700 hover:text-red-600 text-sm">🗑</button>
+                      <span className="p-2 bg-white rounded-full text-gray-700 text-sm">🔍</span>
+                      {!readOnly && <button onClick={e=>{e.stopPropagation();deleteFile(m);}}
+                        className="p-2 bg-white rounded-full text-gray-700 hover:text-red-600 text-sm">🗑</button>}
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
-                      <div className="text-[10px] text-white truncate">{f.name}</div>
+                      <div className="text-[10px] text-white truncate">{m.name}</div>
                     </div>
                   </div>
                 ))}
@@ -1085,33 +1050,61 @@ function SessionDetail({session, drillMap, players, att, onSetStatus, onEdit, on
             )}
 
             {/* Dokumente als Liste */}
-            {files.filter(f=>!f.type?.startsWith('image/')).length>0 && (
+            {docs.length>0 && (
               <div className="space-y-1.5">
-                {files.filter(f=>!f.type?.startsWith('image/')).map((f,i)=>(
-                  <div key={i} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                    <span className="text-xl flex-shrink-0">{fileIcon(f.type)}</span>
+                {docs.map(m=>(
+                  <div key={m.id} className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+                    <span className="text-xl flex-shrink-0">{fileIcon(m.type)}</span>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium text-gray-700 truncate">{f.name}</div>
-                      <div className="text-[10px] text-gray-400">{f.uploadedAt?new Date(f.uploadedAt).toLocaleDateString('de-DE'):''}</div>
+                      <div className="text-xs font-medium text-gray-700 truncate">{m.name}</div>
+                      <div className="text-[10px] text-gray-400">{m.uploadedAt?new Date(m.uploadedAt).toLocaleDateString('de-DE'):''} · {Math.round((m.size||0)/1024)} KB</div>
                     </div>
                     <div className="flex gap-1.5 flex-shrink-0">
-                      <a href={f.url} target="_blank" rel="noopener noreferrer"
+                      <button onClick={()=>openViewer(m)}
                         className="px-2 py-1 rounded-lg bg-blue-50 text-blue-600 text-[10px] font-semibold hover:bg-blue-100">
                         Öffnen
-                      </a>
-                      <button onClick={()=>deleteFile(f)}
+                      </button>
+                      {!readOnly && <button onClick={()=>deleteFile(m)}
                         className="px-2 py-1 rounded-lg bg-red-50 text-red-500 text-[10px] font-semibold hover:bg-red-100">
                         🗑
-                      </button>
+                      </button>}
                     </div>
                   </div>
                 ))}
               </div>
             )}
-          </div>
+          </div>}
         </div>
       </div>
     </div>
+
+    {/* ── INLINE VIEWER MODAL ── */}
+    {viewer && (
+      <div className="fixed inset-0 bg-black/80 z-[60] flex flex-col" onClick={()=>setViewer(null)}>
+        <div className="flex items-center justify-between px-4 py-3 bg-black/60" onClick={e=>e.stopPropagation()}>
+          <div className="text-white text-sm font-medium truncate flex-1">{viewer.name}</div>
+          <button onClick={()=>setViewer(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-white ml-2">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto flex items-center justify-center p-4" onClick={e=>e.stopPropagation()}>
+          {viewer.type.startsWith('image/') ? (
+            <img src={`data:${viewer.type};base64,${viewer.data}`} alt={viewer.name}
+              className="max-w-full max-h-full rounded-xl shadow-2xl object-contain"/>
+          ) : viewer.type.includes('pdf') && blobUrl ? (
+            <iframe src={blobUrl} className="w-full h-full rounded-xl" style={{minHeight:'70vh'}} title={viewer.name}/>
+          ) : (
+            <div className="text-center text-white">
+              <div className="text-5xl mb-4">📄</div>
+              <p className="text-sm mb-4">Dieses Dateiformat kann nicht direkt angezeigt werden.</p>
+              <a href={`data:${viewer.type};base64,${viewer.data}`} download={viewer.name}
+                className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700">
+                ⬇️ Herunterladen
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1670,7 +1663,7 @@ function LineupBuilder({game, players, profile, onClose, show}) {
 //  TRAINER — SPIELE
 // ═══════════════════════════════════════════════════════════════════
 function TrainerSpiele({profile, show}) {
-  const EMPTY_G = {date:'',time:'15:00',opponent:'',location:'',home:true,scoreHome:'',scoreAway:'',notes:''};
+  const EMPTY_G = {date:'',time:'15:00',treffzeit:'',treffpunkt:'',trikot:'',opponent:'',location:'',home:true,scoreHome:'',scoreAway:'',besonderheiten:''};
   const [games,      setGames]      = useState([]);
   const [players,    setPlayers]    = useState([]);
   const [open,       setOpen]       = useState(false);
@@ -1695,7 +1688,7 @@ function TrainerSpiele({profile, show}) {
   },[detailGame?.id]);
 
   const openNew  = () => { setEditing(null); setForm(EMPTY_G); setOpen(true); };
-  const openEdit = (g) => { setEditing(g.id); setForm({date:g.date||'',time:g.time||'15:00',opponent:g.opponent||'',location:g.location||'',home:!!g.home,scoreHome:g.scoreHome??'',scoreAway:g.scoreAway??'',notes:g.notes||''}); setOpen(true); };
+  const openEdit = (g) => { setEditing(g.id); setForm({date:g.date||'',time:g.time||'15:00',treffzeit:g.treffzeit||'',treffpunkt:g.treffpunkt||'',trikot:g.trikot||'',opponent:g.opponent||'',location:g.location||'',home:!!g.home,scoreHome:g.scoreHome??'',scoreAway:g.scoreAway??'',besonderheiten:g.besonderheiten||''}); setOpen(true); };
 
   const save = async (e) => {
     e.preventDefault();
@@ -1752,7 +1745,10 @@ function TrainerSpiele({profile, show}) {
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <div>
                 <div className="font-bold text-base">vs. {detailGame.opponent}</div>
-                <div className="text-xs text-gray-400">{fmtDate(detailGame.date)} · {detailGame.time} Uhr{detailGame.location?' · '+detailGame.location:''}</div>
+                <div className="text-xs text-gray-400">{fmtDate(detailGame.date)} · ⚽ {detailGame.time} Uhr{detailGame.treffzeit?' · 🕐 Treff '+detailGame.treffzeit+' Uhr':''}</div>
+                {detailGame.treffpunkt&&<div className="text-xs text-gray-400">📍 {detailGame.treffpunkt}</div>}
+                {detailGame.trikot&&<div className="text-xs text-gray-400">👕 {detailGame.trikot}</div>}
+                {detailGame.besonderheiten&&<div className="text-xs text-amber-600 font-medium mt-0.5">⚠️ {detailGame.besonderheiten}</div>}
               </div>
               <button onClick={()=>setDetailGame(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500">✕</button>
             </div>
@@ -1828,23 +1824,29 @@ function TrainerSpiele({profile, show}) {
       {open && (
         <Modal title={editing?'Spiel bearbeiten':'Spiel eintragen'} onClose={()=>{setOpen(false);setEditing(null);}}>
           <form onSubmit={save}>
+            <Inp label="Gegner" value={form.opponent} onChange={e=>setForm({...form,opponent:e.target.value})} placeholder="FC Musterstadt" required/>
             <div className="flex gap-2">
               <Inp label="Datum" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/>
-              <Inp label="Zeit" type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/>
+              <Inp label="Anstoß" type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/>
+              <Inp label="Treff" type="time" value={form.treffzeit} onChange={e=>setForm({...form,treffzeit:e.target.value})}/>
             </div>
-            <Inp label="Gegner" value={form.opponent} onChange={e=>setForm({...form,opponent:e.target.value})} placeholder="FC Musterstadt" required/>
-            <Inp label="Ort" value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Sportstadion"/>
+            <Inp label="Treffpunkt" value={form.treffpunkt} onChange={e=>setForm({...form,treffpunkt:e.target.value})} placeholder="z.B. Vereinsheim Parkplatz"/>
+            <Inp label="Ort / Stadion" value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Sportstadion"/>
+            <Inp label="Trikotfarbe" value={form.trikot} onChange={e=>setForm({...form,trikot:e.target.value})} placeholder="z.B. Rot (Heim) oder Weiß (Auswärts)"/>
             <label className="flex items-center gap-2 text-sm text-gray-600 mb-3 cursor-pointer">
               <input type="checkbox" checked={form.home} onChange={e=>setForm({...form,home:e.target.checked})} className="accent-red-600"/> Heimspiel
             </label>
-            <div className="flex items-center gap-2 mb-3">
-              <input type="number" min="0" placeholder="Heim" value={form.scoreHome} onChange={e=>setForm({...form,scoreHome:e.target.value})}
-                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
-              <span className="text-gray-400 font-bold text-lg">:</span>
-              <input type="number" min="0" placeholder="Gast" value={form.scoreAway} onChange={e=>setForm({...form,scoreAway:e.target.value})}
-                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+            <Txt label="Besonderheiten" value={form.besonderheiten} onChange={e=>setForm({...form,besonderheiten:e.target.value})} rows={2} placeholder="z.B. Wichtiges Derby, Ehrengast erwartet…"/>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Ergebnis (nach dem Spiel)</label>
+              <div className="flex items-center gap-2">
+                <input type="number" min="0" placeholder="Heim" value={form.scoreHome} onChange={e=>setForm({...form,scoreHome:e.target.value})}
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+                <span className="text-gray-400 font-bold text-lg">:</span>
+                <input type="number" min="0" placeholder="Gast" value={form.scoreAway} onChange={e=>setForm({...form,scoreAway:e.target.value})}
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"/>
+              </div>
             </div>
-            <Txt label="Notizen" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows={2}/>
             <div className="flex gap-2">
               <Btn type="button" variant="secondary" className="flex-1" onClick={()=>{setOpen(false);setEditing(null);}}>Abbrechen</Btn>
               <Btn type="submit" className="flex-1">{editing?'Aktualisieren':'Speichern'}</Btn>
@@ -2202,7 +2204,7 @@ function TrainerApp({profile}) {
 
   const nav = [
     {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
-    {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
+    {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
     {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
   ];
@@ -2233,6 +2235,7 @@ function TrainerApp({profile}) {
     spiele:        <><TeamSwitcher/><TrainerSpiele        key={activeTeamId} profile={activeProfile} show={show}/></>,
     training:      <><TeamSwitcher/><TrainerTraining      key={activeTeamId} profile={activeProfile} show={show}/></>,
     taktikboard:   <><TeamSwitcher/><Taktikboard          key={activeTeamId} profile={activeProfile} show={show}/></>,
+    uebungen:      <UebungenDB profile={profile} show={show}/>,
     verletzungen:  <><TeamSwitcher/><TrainerVerletzungen  key={activeTeamId} profile={activeProfile} show={show}/></>,
     beurteilungen: <><TeamSwitcher/><TrainerBeurteilungen key={activeTeamId} profile={activeProfile} show={show}/></>,
     chat:          <><TeamSwitcher/><ChatPage             key={activeTeamId} profile={activeProfile} accent="red"/></>,
@@ -2258,6 +2261,7 @@ function TrainerApp({profile}) {
 function PlayerTraining({profile}) {
   const [sessions,   setSessions]   = useState([]);
   const [attendance, setAttendance] = useState({});
+  const [detailSession, setDetailSession] = useState(null);
 
   useEffect(()=>{
     return col('sessions').where('teamId','==',profile.teamId)
@@ -2286,15 +2290,33 @@ function PlayerTraining({profile}) {
   return (
     <div className="p-4">
       <h1 className="text-lg font-semibold mb-4">Meine Trainings</h1>
+
+      {/* Detail-Modal (read-only) für Spieler */}
+      {detailSession && (
+        <SessionDetail
+          session={detailSession}
+          drillMap={{}}
+          players={[]}
+          att={{yes:0,no:0,maybe:0,byPlayer:{}}}
+          onSetStatus={()=>{}}
+          onEdit={()=>{}}
+          onClose={()=>setDetailSession(null)}
+          readOnly={true}
+        />
+      )}
+
       {sessions.length===0 ? <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📅</div><p className="text-sm">Noch keine Trainings geplant.</p></div> : (
         <div className="space-y-2">
           {upcoming.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
             {upcoming.map(s=>(
-              <div key={s.id} className="bg-white border border-gray-200 rounded-xl p-4">
-                <div className="text-sm font-semibold">{fmtDate(s.date)} · {s.time} Uhr</div>
-                <div className="text-xs text-gray-400 mb-3">{s.duration} Min{s.location?' · '+s.location:''}</div>
-                {s.notes&&<p className="text-xs text-gray-600 mb-3 leading-relaxed">{s.notes}</p>}
-                <div className="flex gap-2">
+              <div key={s.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={()=>setDetailSession(s)}>
+                  <div className="text-sm font-semibold">{fmtDate(s.date)} · {s.time} Uhr</div>
+                  <div className="text-xs text-gray-400">{s.duration} Min{s.location?' · '+s.location:''}</div>
+                  {s.notes&&<p className="text-xs text-gray-500 mt-1 line-clamp-2">{s.notes}</p>}
+                  <div className="text-[10px] text-gray-400 mt-1.5">📎 Tippen für Details & Anhänge</div>
+                </div>
+                <div className="flex gap-2 px-4 pb-3" onClick={e=>e.stopPropagation()}>
                   {[
                     {st:'attend',icon:'✓',label:'Zusagen',on:'bg-red-600 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-700'},
                     {st:'cancel',icon:'✕',label:'Absagen',on:'bg-red-500 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600'},
@@ -2311,7 +2333,12 @@ function PlayerTraining({profile}) {
             ))}
           </>}
           {past.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
-            {past.map(s=><div key={s.id} className="bg-gray-50 border border-gray-200 rounded-xl p-3 opacity-60 text-sm">{fmtDate(s.date)} · {s.time}</div>)}
+            {past.map(s=>(
+              <div key={s.id} className="bg-gray-50 border border-gray-200 rounded-xl p-3 opacity-60 text-sm cursor-pointer hover:opacity-80"
+                onClick={()=>setDetailSession(s)}>
+                {fmtDate(s.date)} · {s.time} · <span className="text-xs text-gray-400">📎 Anhänge</span>
+              </div>
+            ))}
           </>}
         </div>
       )}
@@ -2356,13 +2383,22 @@ function PlayerSpiele({profile}) {
     const rsvp = myRsvp[g.id]||{};
     return (
       <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <div>
-            <div className="text-sm font-semibold">vs. {g.opponent}</div>
-            <div className="text-xs text-gray-400 mt-0.5">
-              {fmtDate(g.date)} · {g.time} Uhr{g.location?' · '+g.location:''} · {g.home?'🏠 Heim':'✈️ Auswärts'}
-            </div>
+        <div className="mb-3">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-semibold text-sm">vs. {g.opponent}</span>
+            <span className="text-xs text-gray-400">{g.home?'🏠 Heim':'✈️ Auswärts'}</span>
           </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600 mt-1.5">
+            <div><span className="text-gray-400">📅 Datum:</span> {fmtDate(g.date)}</div>
+            <div><span className="text-gray-400">⚽ Anstoß:</span> {g.time||'—'} Uhr</div>
+            {g.treffzeit&&<div><span className="text-gray-400">🕐 Treff:</span> {g.treffzeit} Uhr</div>}
+            {g.treffpunkt&&<div className="col-span-2"><span className="text-gray-400">📍 Treffpunkt:</span> {g.treffpunkt}</div>}
+            {g.location&&<div className="col-span-2"><span className="text-gray-400">🏟 Ort:</span> {g.location}</div>}
+            {g.trikot&&<div className="col-span-2"><span className="text-gray-400">👕 Trikot:</span> {g.trikot}</div>}
+          </div>
+          {g.besonderheiten&&<div className="mt-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 text-amber-800">
+            <span className="font-semibold">⚠️ Besonderheiten:</span> {g.besonderheiten}
+          </div>}
         </div>
         {/* RSVP */}
         <div className="mb-3">
@@ -2668,8 +2704,9 @@ function AdminTrainer({show}) {
   const [allUsers,    setAllUsers]    = useState([]);
   const [teams,       setTeams]       = useState([]);
   const [open,        setOpen]        = useState(false);
-  const [editTeams,   setEditTeams]   = useState(null); // user doc
-  const [editRole,    setEditRole]    = useState(null); // user doc
+  const [editTeams,   setEditTeams]   = useState(null);
+  const [editRole,    setEditRole]    = useState(null);
+  const [delTrainer,  setDelTrainer]  = useState(null); // {id, name}
   const [form,        setForm]        = useState({name:'',email:'',pw:'',teamId:''});
   const [loading,     setLoading]     = useState(false);
   const [selRole,     setSelRole]     = useState('');
@@ -2692,14 +2729,14 @@ function AdminTrainer({show}) {
   const add = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
-      const user = await createUser(form.email, form.pw);
-      await col('users').doc(user.uid).set({
-        name:form.name, email:form.email, role:'trainer',
-        teamId:form.teamId, trainerTeamId:form.teamId,
+      await col('users').add({
+        name: form.name.trim(), role:'trainer',
+        teamId: form.teamId, trainerTeamId: form.teamId,
         trainerTeamIds: form.teamId ? [form.teamId] : [],
-        status:'active', color:randColor(), createdAt:ts()
+        status:'active', color:randColor(),
+        claimed:false, uid:'', email:'', createdAt:ts()
       });
-      show('Trainer angelegt ✅'); setForm({name:'',email:'',pw:'',teamId:''}); setOpen(false);
+      show('Trainer angelegt ✅'); setForm({name:'',teamId:''}); setOpen(false);
     } catch(err) { show(err.message,'error'); }
     setLoading(false);
   };
@@ -2730,6 +2767,17 @@ function AdminTrainer({show}) {
     await col('users').doc(editRole.id).update({role: selRole, status:'active'});
     show('Rolle geändert ✅');
     setEditRole(null); setSelRole(''); setLoading(false);
+  };
+
+  const doDeleteTrainer = async () => {
+    if(!delTrainer) return;
+    setLoading(true);
+    try {
+      await col('users').doc(delTrainer.id).delete();
+      show(`${delTrainer.name} entfernt`);
+      setDelTrainer(null);
+    } catch(e){ show(e.message,'error'); }
+    setLoading(false);
   };
 
   const teamMap = Object.fromEntries(teams.map(t=>[t.id,t.name]));
@@ -2774,19 +2822,34 @@ function AdminTrainer({show}) {
       {/* Add trainer modal */}
       {open && (
         <Modal title="Trainer anlegen" onClose={()=>setOpen(false)}>
+          <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-3">
+            ℹ️ Name eintragen — der Trainer registriert sich selbst und sucht dann seinen Namen.
+          </p>
           <form onSubmit={add}>
-            <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/>
-            <Inp label="E-Mail" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} required/>
-            <Inp label="Passwort" type="password" value={form.pw} onChange={e=>setForm({...form,pw:e.target.value})} required minLength={6}/>
-            <Sel label="Primäres Team" value={form.teamId} onChange={e=>setForm({...form,teamId:e.target.value})}>
+            <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Max Mustermann" required/>
+            <Sel label="Team" value={form.teamId} onChange={e=>setForm({...form,teamId:e.target.value})} required>
               <option value="">Team wählen…</option>
               {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
             </Sel>
-            <div className="flex gap-2">
+            <div className="flex gap-2 mt-1">
               <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn>
-              <Btn type="submit" variant="purple" className="flex-1" disabled={loading}>{loading?'…':'Anlegen'}</Btn>
+              <Btn type="submit" variant="purple" className="flex-1" disabled={loading||!form.name.trim()||!form.teamId}>{loading?'…':'Anlegen'}</Btn>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* Delete trainer modal */}
+      {delTrainer && (
+        <Modal title="Trainer entfernen?" onClose={()=>setDelTrainer(null)}>
+          <p className="text-sm text-gray-600 mb-4"><strong>{delTrainer.name}</strong> dauerhaft aus dem System entfernen?</p>
+          <div className="flex gap-2">
+            <button className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>setDelTrainer(null)}>Abbrechen</button>
+            <button onClick={doDeleteTrainer} disabled={loading}
+              className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold disabled:opacity-40">
+              {loading?'…':'Entfernen'}
+            </button>
+          </div>
         </Modal>
       )}
 
@@ -2836,6 +2899,10 @@ function AdminTrainer({show}) {
                     <button onClick={()=>{setEditRole(t);setSelRole(t.role);}}
                       className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap">
                       🔄 Rolle
+                    </button>
+                    <button onClick={()=>setDelTrainer({id:t.id,name:t.name})}
+                      className="text-xs px-2 py-1 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors whitespace-nowrap">
+                      🗑 Löschen
                     </button>
                   </div>
                 </div>
@@ -3060,34 +3127,249 @@ const fileIcon = (type='') => {
 };
 const fmtSize = (b) => b>1048576 ? (b/1048576).toFixed(1)+' MB' : (b/1024).toFixed(0)+' KB';
 
+// ═══════════════════════════════════════════════════════════════════
+//  ÜBUNGSDATENBANK (Trainer + Vorstand)
+// ═══════════════════════════════════════════════════════════════════
+function UebungenDB({profile, show}) {
+  const CATS   = ['Aufwärmen','Technik','Taktik','Kondition','Spielform','Abschluss','Sonstiges'];
+  const AGES   = ['Alle','U8','U10','U12','U14','U16','U18','Senioren'];
+  const EMPTY  = {title:'',category:'Technik',ageRange:'Alle',description:'',execution:'',duration:'',minPlayers:'',materials:'',imageData:''};
+
+  const [uebungen,    setUebungen]    = useState([]);
+  const [filterCat,   setFilterCat]   = useState('Alle');
+  const [filterAge,   setFilterAge]   = useState('Alle');
+  const [search,      setSearch]      = useState('');
+  const [open,        setOpen]        = useState(false);
+  const [editing,     setEditing]     = useState(null);
+  const [form,        setForm]        = useState(EMPTY);
+  const [detail,      setDetail]      = useState(null);
+  const [uploading,   setUploading]   = useState(false);
+  const [imgErr,      setImgErr]      = useState('');
+  const imgRef = useRef();
+
+  useEffect(()=>{
+    return col('uebungen').orderBy('createdAt','desc')
+      .onSnapshot(s=>setUebungen(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[]);
+
+  const openNew  = () => { setEditing(null); setForm(EMPTY); setImgErr(''); setOpen(true); };
+  const openEdit = (u) => { setEditing(u.id); setForm({title:u.title||'',category:u.category||'Technik',ageRange:u.ageRange||'Alle',description:u.description||'',execution:u.execution||'',duration:u.duration||'',minPlayers:u.minPlayers||'',materials:u.materials||'',imageData:u.imageData||''}); setImgErr(''); setOpen(true); };
+
+  const pickImage = async (e) => {
+    const file = e.target.files?.[0]; if(!file) return;
+    if(!file.type.startsWith('image/')) { setImgErr('Nur Bilder erlaubt.'); return; }
+    if(file.size > 700*1024) { setImgErr(`Bild zu groß (${Math.round(file.size/1024)} KB). Max 700 KB.`); return; }
+    setUploading(true); setImgErr('');
+    const data = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
+    setForm(f=>({...f,imageData:data}));
+    setUploading(false);
+    e.target.value='';
+  };
+
+  const save = async (e) => {
+    e.preventDefault();
+    const doc = {...form, uploadedBy:profile.name, uploadedByRole:profile.role, updatedAt:ts()};
+    if(editing) {
+      await col('uebungen').doc(editing).update(doc);
+      show('Übung aktualisiert ✅');
+    } else {
+      await col('uebungen').add({...doc, createdAt:ts()});
+      show('Übung gespeichert ✅');
+    }
+    setOpen(false); setEditing(null);
+  };
+
+  const del = async (u) => {
+    if(!confirm(`"${u.title}" wirklich löschen?`)) return;
+    await col('uebungen').doc(u.id).delete();
+    show('Gelöscht');
+  };
+
+  const canEdit = (u) => profile.role==='vorstand'||profile.role==='vorstand_trainer'||u.uploadedBy===profile.name;
+
+  const filtered = uebungen.filter(u=>{
+    if(filterCat!=='Alle' && u.category!==filterCat) return false;
+    if(filterAge!=='Alle' && u.ageRange!==filterAge && u.ageRange!=='Alle') return false;
+    if(search && !(u.title||'').toLowerCase().includes(search.toLowerCase()) && !(u.description||'').toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const CAT_COLOR = {Aufwärmen:'bg-orange-100 text-orange-700',Technik:'bg-blue-100 text-blue-700',Taktik:'bg-purple-100 text-purple-700',Kondition:'bg-green-100 text-green-700',Spielform:'bg-red-100 text-red-700',Abschluss:'bg-pink-100 text-pink-700',Sonstiges:'bg-gray-100 text-gray-600'};
+
+  return (
+    <div className="p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div><h1 className="text-lg font-semibold">Übungsdatenbank</h1><p className="text-xs text-gray-400">{uebungen.length} Übungen gesamt</p></div>
+        <Btn size="sm" onClick={openNew}>+ Übung</Btn>
+      </div>
+
+      {/* Suche + Filter */}
+      <div className="space-y-2 mb-4">
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Suche…"
+          className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"/>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {['Alle',...CATS].map(c=>(
+            <button key={c} onClick={()=>setFilterCat(c)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${filterCat===c?'bg-red-600 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{c}</button>
+          ))}
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {AGES.map(a=>(
+            <button key={a} onClick={()=>setFilterAge(a)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${filterAge===a?'bg-gray-700 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{a}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Detail-Modal */}
+      {detail && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={()=>setDetail(null)}>
+          <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col shadow-2xl" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <div className="font-bold text-base">{detail.title}</div>
+                <div className="flex gap-2 mt-1">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${CAT_COLOR[detail.category]||'bg-gray-100 text-gray-600'}`}>{detail.category}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-gray-100 text-gray-600">{detail.ageRange}</span>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                {canEdit(detail) && <button onClick={()=>{setDetail(null);openEdit(detail);}} className="text-xs text-gray-500 hover:text-red-600 px-2 py-1.5 border border-gray-200 rounded-lg">✏️</button>}
+                <button onClick={()=>setDetail(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500">✕</button>
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1 p-5 space-y-4">
+              {detail.imageData && <img src={detail.imageData} alt={detail.title} className="w-full rounded-xl object-cover max-h-52"/>}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-blue-50 rounded-xl p-3 text-center"><div className="text-lg font-bold text-blue-700">{detail.duration||'—'}'</div><div className="text-[10px] text-blue-500">Dauer</div></div>
+                <div className="bg-green-50 rounded-xl p-3 text-center"><div className="text-lg font-bold text-green-700">{detail.minPlayers||'—'}</div><div className="text-[10px] text-green-500">Min. Spieler</div></div>
+                <div className="bg-orange-50 rounded-xl p-3 text-center"><div className="text-[11px] font-bold text-orange-700 leading-tight">{detail.materials||'—'}</div><div className="text-[10px] text-orange-500">Material</div></div>
+              </div>
+              {detail.description && <div><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Beschreibung</div><p className="text-sm text-gray-700 leading-relaxed bg-gray-50 rounded-xl p-3">{detail.description}</p></div>}
+              {detail.execution  && <div><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Durchführung</div><p className="text-sm text-gray-700 leading-relaxed bg-gray-50 rounded-xl p-3 whitespace-pre-line">{detail.execution}</p></div>}
+              <div className="text-[11px] text-gray-400">Erstellt von {detail.uploadedBy||'—'}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Formular-Modal */}
+      {open && (
+        <Modal title={editing?'Übung bearbeiten':'Neue Übung'} onClose={()=>{setOpen(false);setEditing(null);}}>
+          <form onSubmit={save} className="space-y-0">
+            <Inp label="Titel *" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} placeholder="z.B. Passdreiecke 3 gegen 1" required/>
+            <div className="flex gap-2">
+              <Sel label="Kategorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>
+                {CATS.map(c=><option key={c}>{c}</option>)}
+              </Sel>
+              <Sel label="Altersbereich" value={form.ageRange} onChange={e=>setForm({...form,ageRange:e.target.value})}>
+                {AGES.map(a=><option key={a}>{a}</option>)}
+              </Sel>
+            </div>
+            <div className="flex gap-2">
+              <Inp label="Dauer (Min)" type="number" min="1" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})} placeholder="15"/>
+              <Inp label="Min. Spieler" type="number" min="1" value={form.minPlayers} onChange={e=>setForm({...form,minPlayers:e.target.value})} placeholder="6"/>
+            </div>
+            <Inp label="Materialien" value={form.materials} onChange={e=>setForm({...form,materials:e.target.value})} placeholder="z.B. 4 Hütchen, 1 Ball"/>
+            <Txt label="Beschreibung (Was ist das für eine Übung?)" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} rows={2} placeholder="Kurze Beschreibung der Übung…"/>
+            <Txt label="Durchführung (Wie wird sie gemacht?)" value={form.execution} onChange={e=>setForm({...form,execution:e.target.value})} rows={3} placeholder="Schritt für Schritt…"/>
+            {/* Bild */}
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Bild / Skizze (optional, max 700 KB)</label>
+              {form.imageData ? (
+                <div className="relative rounded-xl overflow-hidden border border-gray-200">
+                  <img src={form.imageData} alt="Vorschau" className="w-full max-h-40 object-cover"/>
+                  <button type="button" onClick={()=>setForm(f=>({...f,imageData:''}))}
+                    className="absolute top-2 right-2 w-7 h-7 bg-black/50 text-white rounded-full text-xs flex items-center justify-center hover:bg-red-600">✕</button>
+                </div>
+              ) : (
+                <div onClick={()=>imgRef.current?.click()}
+                  className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center cursor-pointer hover:border-red-400 transition-colors">
+                  <div className="text-2xl text-gray-300 mb-1">🖼️</div>
+                  <div className="text-xs text-gray-400">{uploading?'⏳ Lädt…':'Klicken zum Hochladen'}</div>
+                </div>
+              )}
+              <input ref={imgRef} type="file" accept="image/*" className="hidden" onChange={pickImage}/>
+              {imgErr && <div className="text-xs text-red-600 mt-1">{imgErr}</div>}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>{setOpen(false);setEditing(null);}}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1">{editing?'Aktualisieren':'Speichern'}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Liste */}
+      {filtered.length===0 ? (
+        <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📚</div><p className="text-sm">{uebungen.length===0?'Noch keine Übungen eingetragen.':'Keine Übungen gefunden.'}</p></div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(u=>(
+            <div key={u.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden cursor-pointer hover:border-red-300 transition-all"
+              onClick={()=>setDetail(u)}>
+              <div className="flex gap-3 p-3.5">
+                {u.imageData
+                  ? <img src={u.imageData} alt={u.title} className="w-16 h-16 rounded-xl object-cover flex-shrink-0"/>
+                  : <div className="w-16 h-16 bg-gray-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">📋</div>}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate">{u.title}</div>
+                  <div className="flex gap-1.5 mt-1 flex-wrap">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${CAT_COLOR[u.category]||'bg-gray-100 text-gray-600'}`}>{u.category}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-gray-100 text-gray-600">{u.ageRange}</span>
+                  </div>
+                  <div className="flex gap-3 mt-1.5 text-[11px] text-gray-400">
+                    {u.duration&&<span>⏱ {u.duration} Min</span>}
+                    {u.minPlayers&&<span>👥 min. {u.minPlayers}</span>}
+                    {u.materials&&<span className="truncate">🎯 {u.materials}</span>}
+                  </div>
+                </div>
+                {canEdit(u) && (
+                  <div className="flex flex-col gap-1 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+                    <button onClick={()=>openEdit(u)} className="w-7 h-7 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center text-xs">✏️</button>
+                    <button onClick={()=>del(u)} className="w-7 h-7 bg-gray-100 hover:bg-red-100 hover:text-red-600 rounded-lg flex items-center justify-center text-xs">🗑</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AdminDokumente({profile, show}) {
   const [docs,     setDocs]     = useState([]);
   const [open,     setOpen]     = useState(false);
   const [file,     setFile]     = useState(null);
   const [form,     setForm]     = useState({name:'', category:'Allgemein', notes:''});
-  const [progress, setProgress] = useState(0);
   const [uploading,setUploading]= useState(false);
+  const [uploadErr,setUploadErr]= useState('');
+  const [viewer,   setViewer]   = useState(null);
   const fileRef = useRef(null);
   const CATS = ['Allgemein','Training','Verwaltung','Satzung','Finanzen','Sonstiges'];
 
-  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
+  // Allgemeine Vereinsdokumente laden (ohne Spieler-Docs, die haben playerId gesetzt)
+  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.playerId))); },[]);
 
   const upload = async (e) => {
     e.preventDefault();
     if (!file) { show('Bitte eine Datei wählen','error'); return; }
-    setUploading(true); setProgress(0);
+    if (file.size > 700*1024) { setUploadErr(`Datei zu groß (${Math.round(file.size/1024)} KB). Max. 700 KB.`); return; }
+    setUploading(true); setUploadErr('');
     try {
-      const path = `dokumente/${Date.now()}_${file.name}`;
-      const ref  = storage.ref(path);
-      const task = ref.put(file);
-      task.on('state_changed', snap => setProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100)));
-      await task;
-      const url = await ref.getDownloadURL();
+      const fileData = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = ()=>res(r.result.split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
       await col('dokumente').add({
         name: form.name || file.name,
         category: form.category,
         notes: form.notes,
-        fileUrl: url,
+        fileData,
         fileName: file.name,
         fileType: file.type,
         fileSize: file.size,
@@ -3095,17 +3377,26 @@ function AdminDokumente({profile, show}) {
         createdAt: ts()
       });
       show('Dokument hochgeladen ✅');
-      setForm({name:'',category:'Allgemein',notes:''}); setFile(null); setProgress(0); setOpen(false);
-    } catch(err) { show(err.message,'error'); }
+      setForm({name:'',category:'Allgemein',notes:''}); setFile(null); setOpen(false);
+    } catch(err) { setUploadErr(err.message); }
     setUploading(false);
   };
 
   const del = async (doc) => {
     if(!confirm('Dokument löschen?')) return;
-    try { await storage.refFromURL(doc.fileUrl).delete(); } catch{}
     await col('dokumente').doc(doc.id).delete();
     show('Gelöscht');
   };
+
+  const blobUrlForViewer = React.useMemo(()=>{
+    if(!viewer || !viewer.fileType?.includes('pdf')) return null;
+    try {
+      const bytes = atob(viewer.fileData);
+      const arr = new Uint8Array(bytes.length);
+      for(let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
+      return URL.createObjectURL(new Blob([arr],{type:'application/pdf'}));
+    } catch(e){ return null; }
+  },[viewer]);
 
   const grouped = CATS.reduce((a,c)=>{a[c]=docs.filter(d=>d.category===c);return a;},{});
 
@@ -3133,19 +3424,40 @@ function AdminDokumente({profile, show}) {
             <Inp label="Anzeigename (optional)" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Automatisch aus Dateiname"/>
             <Sel label="Kategorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{CATS.map(c=><option key={c}>{c}</option>)}</Sel>
             <Txt label="Notiz (optional)" rows={2} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
-            {uploading && (
-              <div className="mb-3">
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-purple-600 rounded-full transition-all" style={{width:progress+'%'}}/></div>
-                <div className="text-xs text-gray-400 mt-1 text-center">{progress}% hochgeladen…</div>
-              </div>
-            )}
+            <p className="text-[11px] text-gray-400 mb-2">Maximale Dateigröße: 700 KB</p>
+            {uploadErr && <div className="mb-2 text-xs text-red-600 bg-red-50 p-2 rounded-lg">{uploadErr}</div>}
             <div className="flex gap-2">
               <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)} disabled={uploading}>Abbrechen</Btn>
-              <Btn type="submit" variant="purple" className="flex-1" disabled={uploading||!file}>{uploading?'Lädt hoch…':'Hochladen'}</Btn>
+              <Btn type="submit" variant="purple" className="flex-1" disabled={uploading||!file}>{uploading?'⏳ Lädt…':'Hochladen'}</Btn>
             </div>
           </form>
         </Modal>
       )}
+
+      {/* Inline Viewer */}
+      {viewer && (
+        <div className="fixed inset-0 bg-black/80 z-[60] flex flex-col" onClick={()=>setViewer(null)}>
+          <div className="flex items-center justify-between px-4 py-3 bg-black/60" onClick={e=>e.stopPropagation()}>
+            <div className="text-white text-sm font-medium truncate flex-1">{viewer.name||viewer.fileName}</div>
+            <button onClick={()=>setViewer(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-white ml-2">✕</button>
+          </div>
+          <div className="flex-1 overflow-auto flex items-center justify-center p-4" onClick={e=>e.stopPropagation()}>
+            {viewer.fileType?.startsWith('image/') ? (
+              <img src={`data:${viewer.fileType};base64,${viewer.fileData}`} alt={viewer.name} className="max-w-full max-h-full rounded-xl object-contain"/>
+            ) : viewer.fileType?.includes('pdf') && blobUrlForViewer ? (
+              <iframe src={blobUrlForViewer} className="w-full rounded-xl" style={{minHeight:'75vh'}} title={viewer.name}/>
+            ) : (
+              <div className="text-center text-white">
+                <div className="text-5xl mb-4">📄</div>
+                <p className="text-sm mb-4">Vorschau nicht möglich.</p>
+                <a href={`data:${viewer.fileType};base64,${viewer.fileData}`} download={viewer.fileName}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm font-semibold hover:bg-purple-700">⬇️ Herunterladen</a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {docs.length===0 ? (
         <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📁</div><p className="text-sm">Noch keine Dokumente hochgeladen.</p></div>
       ) : (
@@ -3163,7 +3475,7 @@ function AdminDokumente({profile, show}) {
                       {doc.notes&&<div className="text-xs text-gray-500 mt-0.5 italic">{doc.notes}</div>}
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
-                      <a href={doc.fileUrl} target="_blank" rel="noopener" className="w-8 h-8 bg-purple-50 hover:bg-purple-100 rounded-lg flex items-center justify-center text-purple-600 transition-colors text-sm">↗</a>
+                      <button onClick={()=>setViewer(doc)} className="w-8 h-8 bg-purple-50 hover:bg-purple-100 rounded-lg flex items-center justify-center text-purple-600 transition-colors text-sm">👁</button>
                       <button onClick={()=>del(doc)} className="w-8 h-8 bg-gray-50 hover:bg-red-50 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all text-sm">✕</button>
                     </div>
                   </div>
@@ -3178,17 +3490,46 @@ function AdminDokumente({profile, show}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  DOKUMENTE — TRAINER ANSICHT (nur lesen/herunterladen)
+//  DOKUMENTE — TRAINER ANSICHT (nur lesen/anzeigen)
 // ═══════════════════════════════════════════════════════════════════
 function TrainerDokumente() {
   const [docs, setDocs] = useState([]);
-  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
+  const [viewer, setViewer] = useState(null);
+  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.playerId))); },[]);
   const CATS = ['Allgemein','Training','Verwaltung','Satzung','Finanzen','Sonstiges'];
   const grouped = CATS.reduce((a,c)=>{a[c]=docs.filter(d=>d.category===c);return a;},{});
+  const blobUrl = React.useMemo(()=>{
+    if(!viewer||!viewer.fileType?.includes('pdf')) return null;
+    try { const b=atob(viewer.fileData),a=new Uint8Array(b.length); for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i); return URL.createObjectURL(new Blob([a],{type:'application/pdf'})); } catch(e){return null;}
+  },[viewer]);
 
   return (
     <div className="p-4">
       <h1 className="text-lg font-semibold mb-4">📁 Dokumente</h1>
+
+      {viewer && (
+        <div className="fixed inset-0 bg-black/80 z-[60] flex flex-col" onClick={()=>setViewer(null)}>
+          <div className="flex items-center justify-between px-4 py-3 bg-black/60" onClick={e=>e.stopPropagation()}>
+            <div className="text-white text-sm font-medium truncate flex-1">{viewer.name||viewer.fileName}</div>
+            <button onClick={()=>setViewer(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-white ml-2">✕</button>
+          </div>
+          <div className="flex-1 overflow-auto flex items-center justify-center p-4" onClick={e=>e.stopPropagation()}>
+            {viewer.fileType?.startsWith('image/') ? (
+              <img src={`data:${viewer.fileType};base64,${viewer.fileData}`} alt={viewer.name} className="max-w-full max-h-full rounded-xl object-contain"/>
+            ) : viewer.fileType?.includes('pdf') && blobUrl ? (
+              <iframe src={blobUrl} className="w-full rounded-xl" style={{minHeight:'75vh'}} title={viewer.name}/>
+            ) : (
+              <div className="text-center text-white">
+                <div className="text-5xl mb-4">📄</div>
+                <p className="text-sm mb-4">Vorschau nicht möglich.</p>
+                <a href={`data:${viewer.fileType};base64,${viewer.fileData}`} download={viewer.fileName}
+                  className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold">⬇️ Herunterladen</a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {docs.length===0 ? (
         <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">📁</div><p className="text-sm">Noch keine Dokumente vom Vorstand.</p></div>
       ) : (
@@ -3198,16 +3539,16 @@ function TrainerDokumente() {
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{cat} ({grouped[cat].length})</div>
               <div className="space-y-2">
                 {grouped[cat].map(doc=>(
-                  <a key={doc.id} href={doc.fileUrl} target="_blank" rel="noopener"
-                    className="flex items-center gap-3 bg-white border border-gray-200 hover:border-red-300 hover:bg-red-50 rounded-xl p-3.5 transition-all group">
+                  <button key={doc.id} onClick={()=>setViewer(doc)}
+                    className="w-full flex items-center gap-3 bg-white border border-gray-200 hover:border-red-300 hover:bg-red-50 rounded-xl p-3.5 transition-all group text-left">
                     <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center text-xl flex-shrink-0">{fileIcon(doc.fileType)}</div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate">{doc.name||doc.fileName}</div>
                       <div className="text-xs text-gray-400">{fmtSize(doc.fileSize)} · {fmtAgo(doc.createdAt)}</div>
                       {doc.notes&&<div className="text-xs text-gray-500 italic mt-0.5">{doc.notes}</div>}
                     </div>
-                    <span className="text-gray-300 group-hover:text-red-500 transition-colors text-lg flex-shrink-0">↗</span>
-                  </a>
+                    <span className="text-gray-300 group-hover:text-red-500 transition-colors text-lg flex-shrink-0">👁</span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -3446,8 +3787,9 @@ function AdminTeamverwaltung({show}) {
   const [targetTeam, setTargetTeam] = useState('');
   const [saving,     setSaving]     = useState(false);
   const [openTeams,  setOpenTeams]  = useState({});
-  const [editTeam,   setEditTeam]   = useState(null); // {id,name,category} or 'new'
-  const [delTeam,    setDelTeam]    = useState(null); // team obj to delete
+  const [editTeam,   setEditTeam]   = useState(null);
+  const [delTeam,    setDelTeam]    = useState(null);
+  const [delMember,  setDelMember]  = useState(null); // {id, name} player to delete
   const [editName,   setEditName]   = useState('');
   const [editCat,    setEditCat]    = useState('');
 
@@ -3510,6 +3852,17 @@ function AdminTeamverwaltung({show}) {
     setSaving(false);
   };
 
+  const doDeleteMember = async () => {
+    if(!delMember) return;
+    setSaving(true);
+    try {
+      await col('users').doc(delMember.id).delete();
+      show(`${delMember.name} entfernt`);
+      setDelMember(null);
+    } catch(e){ show(e.message,'error'); }
+    setSaving(false);
+  };
+
   const ROLE_LABEL = {player:'Spieler',trainer:'Trainer',dual:'Trainer+Spieler',vorstand:'Vorstand'};
 
   const delMembers = delTeam ? members.filter(m=>m.teamId===delTeam.id||m.trainerTeamId===delTeam.id) : [];
@@ -3549,6 +3902,22 @@ function AdminTeamverwaltung({show}) {
             <button onClick={doDelete} disabled={saving||delMembers.length>0}
               className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold disabled:opacity-40">
               {saving?'…':'Löschen'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal: Spieler löschen */}
+      {delMember && (
+        <Modal title="Spieler entfernen?" onClose={()=>setDelMember(null)}>
+          <p className="text-sm text-gray-600 mb-4">
+            <strong>{delMember.name}</strong> dauerhaft aus dem System entfernen?
+          </p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDelMember(null)}>Abbrechen</Btn>
+            <button onClick={doDeleteMember} disabled={saving}
+              className="flex-1 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold disabled:opacity-40">
+              {saving?'…':'Entfernen'}
             </button>
           </div>
         </Modal>
@@ -3631,9 +4000,13 @@ function AdminTeamverwaltung({show}) {
                               <div className="text-sm font-medium truncate">{m.name}</div>
                               <div className="text-[10px] text-gray-400">{ROLE_LABEL[m.role]||m.role}</div>
                             </div>
-                            <button onClick={()=>startMove(m,field)} className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded-lg flex-shrink-0">
-                              Team ändern
-                            </button>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <button onClick={()=>startMove(m,field)} className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded-lg">
+                                Team ändern
+                              </button>
+                              <button onClick={()=>setDelMember({id:m.id,name:m.name})}
+                                className="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-red-50" title="Entfernen">🗑</button>
+                            </div>
                           </div>
                         );
                       })}
@@ -3659,9 +4032,13 @@ function AdminTeamverwaltung({show}) {
                                 {!m.claimed&&<span className="text-amber-500"> · ausstehend</span>}
                               </div>
                             </div>
-                            <button onClick={()=>startMove(m,'teamId')} className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded-lg flex-shrink-0">
-                              Team ändern
-                            </button>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <button onClick={()=>startMove(m,'teamId')} className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded-lg">
+                                Team ändern
+                              </button>
+                              <button onClick={()=>setDelMember({id:m.id,name:m.name})}
+                                className="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-red-50" title="Entfernen">🗑</button>
+                            </div>
                           </div>
                         );
                       })}
@@ -4138,25 +4515,23 @@ function AdminPlayerDetail({player, onClose, show}) {
 
   const uploadDoc = async (e) => {
     const file = e.target.files[0]; if(!file) return;
+    if(file.size > 700*1024) { show(`Datei zu groß (${Math.round(file.size/1024)} KB). Max. 700 KB.`,'error'); e.target.value=''; return; }
     setUploading(true);
     try {
-      const ref = storage.ref(`spieler_docs/${player.id}/${Date.now()}_${file.name}`);
-      await ref.put(file);
-      const url = await ref.getDownloadURL();
+      const fileData = await new Promise((res,rej)=>{
+        const r = new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(file);
+      });
       await col('dokumente').add({
         playerId: player.id, playerName: player.name,
-        name: file.name, url, size: file.size, createdAt: ts()
+        name: file.name, fileData, fileType: file.type, size: file.size, createdAt: ts()
       });
       show('Dokument hochgeladen ✅');
     } catch(err) { show(err.message,'error'); }
     setUploading(false);
+    e.target.value='';
   };
 
   const deleteDoc = async (doc) => {
-    try {
-      const ref = storage.refFromURL(doc.url);
-      await ref.delete();
-    } catch{}
     await col('dokumente').doc(doc.id).delete();
     show('Dokument gelöscht');
   };
@@ -4261,17 +4636,25 @@ function AdminPlayerDetail({player, onClose, show}) {
             <input ref={fileRef} type="file" className="hidden" onChange={uploadDoc}/>
           </div>
           {docs.length===0 ? (
-            <div className="text-center text-gray-400 text-xs py-4">Noch keine Dokumente hochgeladen.</div>
+            <div className="text-center text-gray-400 text-xs py-4">Noch keine Dokumente · max. 700 KB</div>
           ) : (
             <div className="space-y-2">
               {docs.map(doc=>(
                 <div key={doc.id} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
-                  <span className="text-base">📄</span>
+                  <span className="text-base">{fileIcon(doc.fileType)}</span>
                   <div className="flex-1 min-w-0">
-                    <a href={doc.url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline truncate block">{doc.name}</a>
+                    <div className="text-xs font-medium text-gray-700 truncate">{doc.name}</div>
                     <div className="text-[10px] text-gray-400">{doc.size?(doc.size/1024).toFixed(1)+' KB':''}</div>
                   </div>
-                  <button onClick={()=>deleteDoc(doc)} className="text-gray-400 hover:text-red-600 p-1 text-xs">🗑</button>
+                  <div className="flex gap-1">
+                    {doc.fileData && (
+                      <a href={`data:${doc.fileType||'application/octet-stream'};base64,${doc.fileData}`}
+                        download={doc.name} className="px-2 py-1 rounded-lg bg-blue-50 text-blue-600 text-[10px] font-semibold hover:bg-blue-100">
+                        ⬇️
+                      </a>
+                    )}
+                    <button onClick={()=>deleteDoc(doc)} className="text-gray-400 hover:text-red-600 p-1 text-xs">🗑</button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -5477,6 +5860,7 @@ function AdminApp({profile}) {
     {section:'Kommunikation', items:[
       {id:'pinnwand',      icon:'📌',  label:'Pinnwand'},
       {id:'dokumente',     icon:'📁',  label:'Dokumente'},
+      {id:'uebungen',      icon:'📚',  label:'Übungsdatenbank'},
       {id:'nachrichten',   icon:'💬',  label:'Nachrichten'},
     ]},
     {section:'Management', items:[
@@ -5496,6 +5880,7 @@ function AdminApp({profile}) {
     genehmigungen:      <AdminGenehmigungen show={show}/>,
     pinnwand:           <AdminPinnwand profile={profile} show={show}/>,
     dokumente:          <AdminDokumente profile={profile} show={show}/>,
+    uebungen:           <UebungenDB profile={profile} show={show}/>,
     nachrichten:        <VorstandNachrichten profile={profile}/>,
     kalender:           <Vereinskalender profile={profile} canEdit={true}/>,
     platz:              <AdminPlatzverwaltung profile={profile} show={show}/>,
@@ -5574,7 +5959,7 @@ function DualApp({profile}) {
 
   const trainerNav = [
     {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
-    {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
+    {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
   ];
   const playerNav = [{section:'', items:[
@@ -5601,6 +5986,7 @@ function DualApp({profile}) {
     spiele: <TrainerSpiele profile={trainerProfile} show={show}/>,
     training: <TrainerTraining profile={trainerProfile} show={show}/>,
     taktikboard: <Taktikboard profile={trainerProfile} show={show}/>,
+    uebungen: <UebungenDB profile={trainerProfile} show={show}/>,
     verletzungen: <TrainerVerletzungen profile={trainerProfile} show={show}/>,
     beurteilungen: <TrainerBeurteilungen profile={trainerProfile} show={show}/>,
     chat: <ChatPage profile={trainerProfile}/>,
@@ -5643,11 +6029,6 @@ function DualApp({profile}) {
 //  PROFIL VERVOLLSTÄNDIGEN (Auth vorhanden, aber kein Firestore-Doc)
 // ═══════════════════════════════════════════════════════════════════
 function CompleteProfile({user, onDone}) {
-  const [name,   setName]   = useState(user.displayName||'');
-  const [dob,    setDob]    = useState('');
-  const [role,   setRole]   = useState('player');
-  const [saving, setSaving] = useState(false);
-  const [msg,    setMsg]    = useState('');
   const ADMIN_EMAIL = 'finanzmakler.rittner@gmail.com';
   const ROLES = [
     {v:'player',           l:'Spieler',            icon:'⚽', desc:'Training, Wellness, Chat'},
@@ -5657,9 +6038,85 @@ function CompleteProfile({user, onDone}) {
     {v:'vorstand_trainer', l:'Vorstand & Trainer', icon:'🎯', desc:'Genehmigung erforderlich 🔒', wide:true},
   ];
 
-  const needsDob = role === 'player' || role === 'dual';
+  // step: 'role' | 'team' | 'name' | 'dob' | 'trainer_team' | 'nonplayer'
+  const [step,           setStep]           = useState('role');
+  const [role,           setRole]           = useState('player');
+  const [teams,          setTeams]          = useState([]);
+  const [selectedTeam,   setSelectedTeam]   = useState(null); // for player
+  const [trainerTeam,    setTrainerTeam]    = useState(null); // for trainer/dual/vt
+  const [slots,          setSlots]          = useState([]);
+  const [loadingSlots,   setLoadingSlots]   = useState(false);
+  const [selectedSlot,   setSelectedSlot]   = useState(null);
+  const [dob,            setDob]            = useState('');
+  const [name,           setName]           = useState(user.displayName||'');
+  const [npDob,          setNpDob]          = useState('');
+  const [saving,         setSaving]         = useState(false);
+  const [msg,            setMsg]            = useState('');
 
-  const save = async (e) => {
+  // Load teams once
+  useEffect(()=>{
+    col('teams').orderBy('name').get().then(s=>setTeams(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[]);
+
+  // Load player slots when player team selected
+  useEffect(()=>{
+    if(!selectedTeam) return;
+    setLoadingSlots(true); setSlots([]);
+    const unsub = col('users')
+      .where('teamId','==',selectedTeam.id)
+      .onSnapshot(s=>{
+        const unclaimed = s.docs.map(d=>({id:d.id,...d.data()}))
+          .filter(u=>u.role==='player' && u.claimed===false && u.id!==user.uid)
+          .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+        setSlots(unclaimed);
+        setLoadingSlots(false);
+      });
+    return ()=>unsub();
+  },[selectedTeam?.id]);
+
+  // Load trainer slots when trainer team selected
+  useEffect(()=>{
+    if(!trainerTeam) return;
+    setLoadingSlots(true); setSlots([]);
+    const unsub = col('users')
+      .where('trainerTeamId','==',trainerTeam.id)
+      .onSnapshot(s=>{
+        setSlots(s.docs.map(d=>({id:d.id,...d.data()})));
+        setLoadingSlots(false);
+      });
+    return ()=>unsub();
+  },[trainerTeam?.id]);
+
+  const savePlayer = async (slot) => {
+    const s = slot || selectedSlot;
+    if(!s) return;
+    setSaving(true);
+    try {
+      // Slot-Daten ins Auth-UID-Dokument übertragen
+      await col('users').doc(user.uid).set({
+        name:      s.name,
+        email:     user.email||'',
+        role:      'player',
+        status:    'active',
+        teamId:    selectedTeam.id,
+        trainerTeamId: '',
+        position:  s.position||'',
+        number:    s.number||'',
+        color:     s.color||randColor(),
+        dob:       s.dob||'',
+        mitgliedStatus: s.mitgliedStatus||'',
+        claimed:   true,
+        claimedAt: ts(),
+        createdAt: ts(),
+      });
+      // Alten Slot löschen → kein doppelter Eintrag
+      await col('users').doc(s.id).delete();
+      onDone();
+    } catch(e){ setMsg(e.message); }
+    setSaving(false);
+  };
+
+  const saveNonPlayer = async (e) => {
     e.preventDefault(); setSaving(true); setMsg('');
     try {
       const email = user.email||'';
@@ -5667,70 +6124,231 @@ function CompleteProfile({user, onDone}) {
       const isFirst  = existing.docs.filter(d=>d.id!==user.uid).length === 0;
       const isAdmin2 = isFirst || email.toLowerCase()===ADMIN_EMAIL;
       const finalRole = isAdmin2 ? 'vorstand' : role;
-      const needsApproval2 = !isAdmin2 && (finalRole === 'vorstand' || finalRole === 'vorstand_trainer');
+      const needsApproval2 = !isAdmin2 && (finalRole==='vorstand'||finalRole==='vorstand_trainer');
       await col('users').doc(user.uid).set({
         name, email, role: finalRole,
         status: needsApproval2 ? 'pending' : 'active',
-        teamId: '', trainerTeamId: '',
-        dob: dob || '',
+        teamId: '',
+        trainerTeamId: trainerTeam?.id || '',
+        dob: '',
         color: randColor(), createdAt: ts(),
-        claimed: finalRole === 'player' ? false : true,
+        claimed: true,
       });
       onDone();
-    } catch(err) { setMsg(err.message); }
+    } catch(err){ setMsg(err.message); }
     setSaving(false);
   };
 
-  const canSubmit = name.trim() && (!needsDob || dob);
-
+  const bg = {background:'linear-gradient(160deg,#1a0505 0%,#0d0d0d 45%,#0a0a0a 100%)'};
+  const cardCls = "w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl p-5 space-y-3";
+  const cardStyle = {background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)'};
   const inputCls2 = "w-full rounded-xl px-4 py-3 text-sm bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-colors";
   const labelCls2 = "block text-xs font-medium text-gray-400 mb-1.5";
+  const btnPrimary = "w-full py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40";
+  const btnPrimaryStyle = {background:'linear-gradient(135deg,#CC0000,#990000)',boxShadow:'0 4px 20px rgba(204,0,0,0.3)'};
 
-  return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4"
-      style={{background:'linear-gradient(160deg,#1a0505 0%,#0d0d0d 45%,#0a0a0a 100%)'}}>
-      <div className="text-center mb-6">
-        <div className="text-4xl mb-2">⚽</div>
-        <h1 className="text-xl font-black text-white">Profil einrichten</h1>
-        <p className="text-xs mt-1" style={{color:'rgba(255,255,255,0.35)'}}>{user.email}</p>
+  const Header = ({icon,title,sub}) => (
+    <div className="text-center mb-5">
+      <div className="text-4xl mb-2">{icon}</div>
+      <h1 className="text-xl font-black text-white">{title}</h1>
+      {sub&&<p className="text-xs mt-1" style={{color:'rgba(255,255,255,0.35)'}}>{sub}</p>}
+    </div>
+  );
+
+  // ── STEP: role ──────────────────────────────────────────────────
+  if(step==='role') return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4" style={bg}>
+      <Header icon="⚽" title="Willkommen!" sub={user.email}/>
+      <div className={cardCls} style={cardStyle}>
+        <p className={labelCls2}>Ich bin…</p>
+        <div className="grid grid-cols-2 gap-2">
+          {ROLES.map(r=>(
+            <button key={r.v} type="button"
+              onClick={()=>{
+                setRole(r.v);
+                if(r.v==='player') setStep('team');
+                else if(r.v==='trainer'||r.v==='dual'||r.v==='vorstand_trainer') setStep('trainer_team');
+                else setStep('nonplayer');
+              }}
+              className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-center transition-all ${r.wide?'col-span-2':''}`}
+              style={{borderColor:'rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.03)'}}>
+              <span className="text-lg">{r.icon}</span>
+              <span className="text-xs font-semibold text-white">{r.l}</span>
+              <span className="text-[9px] leading-tight" style={{color:'rgba(255,255,255,0.4)'}}>{r.desc}</span>
+            </button>
+          ))}
+        </div>
+        <button onClick={()=>auth.signOut()} className="w-full text-xs text-center pt-1" style={{color:'rgba(255,255,255,0.25)'}}>Abmelden</button>
       </div>
-      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl p-5 space-y-3"
-        style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)'}}>
-        <form onSubmit={save} className="space-y-3">
+    </div>
+  );
+
+  // ── STEP: team (player only) ─────────────────────────────────────
+  if(step==='team') return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4" style={bg}>
+      <Header icon="🏟️" title="Dein Team" sub="Wähle das Team aus, in dem du spielst"/>
+      <div className={cardCls} style={cardStyle}>
+        {teams.length===0
+          ? <div className="text-center py-6 text-gray-400 text-sm">Noch keine Teams angelegt.</div>
+          : <div className="space-y-2">
+              {teams.map(t=>(
+                <button key={t.id} onClick={()=>{setSelectedTeam(t);setSelectedSlot(null);setStep('name');}}
+                  className="w-full flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all"
+                  style={{border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.04)'}}>
+                  <span className="text-2xl">⚽</span>
+                  <div>
+                    <div className="text-sm font-semibold text-white">{t.name}</div>
+                    {t.category&&<div className="text-xs" style={{color:'rgba(255,255,255,0.4)'}}>{t.category}</div>}
+                  </div>
+                </button>
+              ))}
+            </div>
+        }
+        <button onClick={()=>setStep('role')} className="w-full text-xs text-center pt-1" style={{color:'rgba(255,255,255,0.3)'}}>← Zurück</button>
+      </div>
+    </div>
+  );
+
+  // ── STEP: name (player picks from slot list) ─────────────────────
+  if(step==='name') return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4" style={bg}>
+      <Header icon="🔍" title="Wähle deinen Namen" sub={`Team: ${selectedTeam?.name}`}/>
+      <div className={cardCls} style={cardStyle}>
+        {loadingSlots ? <Spinner/> : slots.length===0 ? (
+          <div className="text-center py-6">
+            <div className="text-3xl mb-2">🤔</div>
+            <p className="text-sm text-gray-400 mb-1">Noch kein Name für dich angelegt.</p>
+            <p className="text-xs" style={{color:'rgba(255,255,255,0.3)'}}>Bitte den Trainer, deinen Namen im Kader einzutragen.</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {slots.map(s=>(
+              <button key={s.id} onClick={()=>savePlayer(s)}
+                className="w-full flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all"
+                style={{border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.04)'}}>
+                <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                  style={{background:s.color||'#CC0000'}}>
+                  {s.number||initials(s.name)}
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-white">{s.name}</div>
+                  <div className="text-xs" style={{color:'rgba(255,255,255,0.4)'}}>{s.position||'—'}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+        <button onClick={()=>setStep('team')} className="w-full text-xs text-center pt-2" style={{color:'rgba(255,255,255,0.3)'}}>← Zurück</button>
+      </div>
+    </div>
+  );
+
+  // ── STEP: dob (confirm identity) ─────────────────────────────────
+  // ── STEP: trainer_team (trainer / dual / vorstand_trainer) ─────────
+  if(step==='trainer_team') return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4" style={bg}>
+      <Header icon="📋" title="Dein Trainer-Team"
+        sub={role==='dual'?'Welches Team trainierst du?':role==='vorstand_trainer'?'Welches Team betreust du?':'Welches Team trainierst du?'}/>
+      <div className={cardCls} style={cardStyle}>
+        {teams.length===0
+          ? <div className="text-center py-6 text-gray-400 text-sm">Noch keine Teams angelegt.</div>
+          : <div className="space-y-2">
+              {teams.map(t=>(
+                <button key={t.id} onClick={()=>{setTrainerTeam(t);setStep(role==='trainer'?'trainer_name':'nonplayer');}}
+                  className="w-full flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all"
+                  style={{border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.04)'}}>
+                  <span className="text-2xl">📋</span>
+                  <div>
+                    <div className="text-sm font-semibold text-white">{t.name}</div>
+                    {t.category&&<div className="text-xs" style={{color:'rgba(255,255,255,0.4)'}}>{t.category}</div>}
+                  </div>
+                </button>
+              ))}
+            </div>
+        }
+        <button onClick={()=>setStep('role')} className="w-full text-xs text-center pt-1" style={{color:'rgba(255,255,255,0.3)'}}>← Zurück</button>
+      </div>
+    </div>
+  );
+
+  // ── STEP: trainer_name (trainer picks from slot list) ───────────
+  if(step==='trainer_name') {
+    const trainerSlots = slots.filter(s=>s.role==='trainer'&&s.claimed===false&&s.id!==user.uid);
+
+    const saveTrainer = async (s) => {
+      setSaving(true);
+      try {
+        await col('users').doc(user.uid).set({
+          name:      s.name,
+          email:     user.email||'',
+          role:      'trainer',
+          status:    'active',
+          teamId:    trainerTeam.id,
+          trainerTeamId: trainerTeam.id,
+          trainerTeamIds: [trainerTeam.id],
+          color:     s.color||randColor(),
+          claimed:   true,
+          slotId:    s.id,
+          claimedAt: ts(),
+          createdAt: ts(),
+        });
+        // Alten Slot löschen → kein doppelter Eintrag
+        await col('users').doc(s.id).delete();
+        onDone();
+      } catch(e){ setMsg(e.message); }
+      setSaving(false);
+    };
+
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-4" style={bg}>
+        <Header icon="📋" title="Wähle deinen Namen" sub={`Team: ${trainerTeam?.name}`}/>
+        <div className={cardCls} style={cardStyle}>
+          {loadingSlots ? <Spinner/> : trainerSlots.length===0 ? (
+            <div className="text-center py-6">
+              <div className="text-3xl mb-2">🤔</div>
+              <p className="text-sm text-gray-400 mb-1">Noch kein Trainer-Slot angelegt.</p>
+              <p className="text-xs" style={{color:'rgba(255,255,255,0.3)'}}>Bitte den Vorstand, deinen Namen einzutragen.</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {trainerSlots.map(s=>(
+                <button key={s.id} onClick={()=>saveTrainer(s)} disabled={saving}
+                  className="w-full flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all disabled:opacity-50"
+                  style={{border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.04)'}}>
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                    style={{background:s.color||'#CC0000'}}>
+                    {initials(s.name)}
+                  </div>
+                  <div className="text-sm font-semibold text-white">{s.name}</div>
+                </button>
+              ))}
+            </div>
+          )}
+          {msg&&<p className="text-xs rounded-xl px-4 py-2.5 mt-2" style={{background:'rgba(204,0,0,0.15)',border:'1px solid rgba(204,0,0,0.3)',color:'#ff8080'}}>{msg}</p>}
+          <button onClick={()=>setStep('trainer_team')} className="w-full text-xs text-center pt-2" style={{color:'rgba(255,255,255,0.3)'}}>← Zurück</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP: nonplayer (vorstand / dual / vorstand_trainer) ─────────
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4" style={bg}>
+      <Header icon={role==='trainer'?'📋':role==='dual'?'🔄':'🏟️'} title="Profil einrichten" sub={user.email}/>
+      <div className={cardCls} style={cardStyle}>
+        <form onSubmit={saveNonPlayer} className="space-y-3">
           <div>
             <label className={labelCls2}>Vollständiger Name</label>
             <input className={inputCls2} value={name} onChange={e=>setName(e.target.value)} placeholder="Max Mustermann" required/>
           </div>
-          <div>
-            <label className={labelCls2}>Ich bin…</label>
-            <div className="grid grid-cols-2 gap-2">
-              {ROLES.map(r=>(
-                <button key={r.v} type="button" onClick={()=>setRole(r.v)}
-                  className={`flex flex-col items-center gap-1 py-3 px-2 rounded-xl border text-center transition-all ${r.wide?'col-span-2':''}`}
-                  style={role===r.v
-                    ? {borderColor:'#CC0000',background:'rgba(204,0,0,0.12)'}
-                    : {borderColor:'rgba(255,255,255,0.08)',background:'rgba(255,255,255,0.03)'}}>
-                  <span className="text-lg">{r.icon}</span>
-                  <span className="text-xs font-semibold text-white">{r.l}</span>
-                  <span className="text-[9px] leading-tight" style={{color:'rgba(255,255,255,0.4)'}}>{r.desc}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          {needsDob && (
-            <div>
-              <label className={labelCls2}>Geburtsdatum *</label>
-              <input className={inputCls2} type="date" value={dob} onChange={e=>setDob(e.target.value)} required/>
-            </div>
-          )}
-          {msg && <p className="text-xs rounded-xl px-4 py-2.5" style={{background:'rgba(204,0,0,0.15)',border:'1px solid rgba(204,0,0,0.3)',color:'#ff8080'}}>{msg}</p>}
-          <button type="submit" disabled={saving||!canSubmit}
-            className="w-full py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40"
-            style={{background:'linear-gradient(135deg,#CC0000,#990000)',boxShadow:'0 4px 20px rgba(204,0,0,0.3)'}}>
-            {saving ? '⏳ Speichern…' : 'Profil speichern'}
+          {msg&&<p className="text-xs rounded-xl px-4 py-2.5" style={{background:'rgba(204,0,0,0.15)',border:'1px solid rgba(204,0,0,0.3)',color:'#ff8080'}}>{msg}</p>}
+          <button type="submit" disabled={saving||!name.trim()}
+            className={btnPrimary} style={btnPrimaryStyle}>
+            {saving?'⏳ Speichern…':'Profil speichern'}
           </button>
-          <button type="button" onClick={()=>auth.signOut()}
-            className="w-full text-xs text-center" style={{color:'rgba(255,255,255,0.25)'}}>Abmelden</button>
+          <button type="button"
+            onClick={()=>setStep(role==='trainer'||role==='dual'||role==='vorstand_trainer'?'trainer_team':'role')}
+            className="w-full text-xs text-center" style={{color:'rgba(255,255,255,0.25)'}}>← Zurück</button>
         </form>
       </div>
     </div>
@@ -5738,123 +6356,108 @@ function CompleteProfile({user, onDone}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  SPIELER VERKNÜPFEN (nach Team-Auswahl: Slot-Suche & Verbindung)
+//  SPIELER VERKNÜPFEN (Fallback für alte Accounts ohne teamId)
 // ═══════════════════════════════════════════════════════════════════
 function ClaimPlayer({authUser, profile, onClaimed}) {
-  const [slots,      setSlots]      = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [saving,     setSaving]     = useState(false);
-  const [search,     setSearch]     = useState('');
-  const [pendingSlot,setPendingSlot]= useState(null); // slot chosen, waiting for dob
-  const [dob,        setDob]        = useState('');
+  const [teams,       setTeams]       = useState([]);
+  const [selectedTeam,setSelectedTeam]= useState(null);
+  const [slots,       setSlots]       = useState([]);
+  const [loading,     setLoading]     = useState(false);
+  const [saving,      setSaving]      = useState(false);
+  const [pendingSlot, setPendingSlot] = useState(null);
 
   useEffect(()=>{
-    return col('users')
-      .where('teamId','==',profile.teamId)
-      .onSnapshot(s=>{
-        const all = s.docs.map(d=>({id:d.id,...d.data()}));
-        const unclaimed = all
-          .filter(u => u.role==='player' && u.claimed===false && u.id!==authUser.uid)
-          .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
-        setSlots(unclaimed);
-        setLoading(false);
-      });
-  },[profile.teamId]);
+    col('teams').orderBy('name').get().then(s=>setTeams(s.docs.map(d=>({id:d.id,...d.data()}))));
+  },[]);
 
-  const claim = async () => {
-    if (!pendingSlot || !dob) return;
+  useEffect(()=>{
+    if(!selectedTeam) return;
+    setLoading(true);
+    const unsub = col('users').where('teamId','==',selectedTeam.id).onSnapshot(s=>{
+      const unclaimed = s.docs.map(d=>({id:d.id,...d.data()}))
+        .filter(u=>u.role==='player'&&u.claimed===false&&u.id!==authUser.uid)
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+      setSlots(unclaimed); setLoading(false);
+    });
+    return ()=>unsub();
+  },[selectedTeam?.id]);
+
+  const claim = async (slot) => {
+    const s = slot || pendingSlot;
+    if(!s) return;
     setSaving(true);
     try {
+      // Slot-Daten ins bestehende Auth-UID-Dokument übertragen
       await col('users').doc(authUser.uid).update({
-        name:      pendingSlot.name,
-        position:  pendingSlot.position,
-        number:    pendingSlot.number,
-        color:     pendingSlot.color || randColor(),
-        dob,
-        claimed:   true,
-        slotId:    pendingSlot.id,
-        claimedAt: ts(),
+        name:s.name, position:s.position||'',
+        number:s.number||'', color:s.color||randColor(),
+        teamId:selectedTeam.id, dob:s.dob||'',
+        mitgliedStatus:s.mitgliedStatus||'',
+        claimed:true, claimedAt:ts(),
       });
-      await col('users').doc(pendingSlot.id).update({
-        claimed: true, uid: authUser.uid, claimedAt: ts(),
-      });
+      // Alten Slot löschen → kein doppelter Eintrag
+      await col('users').doc(s.id).delete();
       onClaimed();
-    } catch(e) { alert(e.message); }
+    } catch(e){alert(e.message);}
     setSaving(false);
   };
 
-  const filtered = slots.filter(s=>(s.name||'').toLowerCase().includes(search.toLowerCase()));
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-red-800 to-gray-950 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-red-900 to-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
           <div className="text-5xl mb-2">🔗</div>
-          <h1 className="text-2xl font-bold text-white">Deinen Namen suchen</h1>
-          <p className="text-red-200 text-sm mt-1">Der Trainer hat deinen Namen bereits angelegt.<br/>Wähle dich aus der Liste aus.</p>
+          <h1 className="text-2xl font-bold text-white">Account verknüpfen</h1>
+          <p className="text-red-200 text-sm mt-1">Wähle zuerst dein Team, dann deinen Namen.</p>
         </div>
-        <div className="bg-white rounded-2xl shadow-2xl p-5">
-          {loading ? <Spinner/> : (
+        <div className="bg-white rounded-2xl shadow-2xl p-5 space-y-3">
+          {/* Team picker */}
+          {!selectedTeam ? (
             <>
-              {/* Schritt 2: Geburtsdatum bestätigen */}
-              {pendingSlot ? (
-                <div>
-                  <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4">
-                    <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:pendingSlot.color||'#CC0000'}}>
-                      {pendingSlot.number||initials(pendingSlot.name)}
-                    </div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Dein Team</p>
+              <div className="space-y-2">
+                {teams.map(t=>(
+                  <button key={t.id} onClick={()=>{setSelectedTeam(t);setSlots([]);setPendingSlot(null);}}
+                    className="w-full flex items-center gap-3 border border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3 text-left transition-all">
+                    <span className="text-xl">⚽</span>
                     <div>
-                      <div className="text-sm font-semibold">{pendingSlot.name}</div>
-                      <div className="text-xs text-gray-400">{pendingSlot.position}</div>
+                      <div className="text-sm font-semibold">{t.name}</div>
+                      {t.category&&<div className="text-xs text-gray-400">{t.category}</div>}
                     </div>
-                  </div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Dein Geburtsdatum *</label>
-                  <input type="date" value={dob} onChange={e=>setDob(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"/>
-                  <div className="flex gap-2">
-                    <button onClick={()=>setPendingSlot(null)} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Zurück</button>
-                    <button onClick={claim} disabled={!dob||saving}
-                      className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold disabled:opacity-50 hover:bg-red-700 transition-colors">
-                      {saving?'…':'Bestätigen'}
-                    </button>
-                  </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Team: {selectedTeam.name}</p>
+                <button onClick={()=>setSelectedTeam(null)} className="text-xs text-red-500 hover:underline">Ändern</button>
+              </div>
+              {loading ? <Spinner/> : slots.length===0 ? (
+                <div className="text-center py-6">
+                  <div className="text-3xl mb-2">🤔</div>
+                  <p className="text-sm text-gray-600">Noch keine freien Plätze in diesem Team.</p>
+                  <p className="text-xs text-gray-400 mt-1">Bitte den Trainer, deinen Namen anzulegen.</p>
                 </div>
               ) : (
-                <>
-                  <input
-                    value={search} onChange={e=>setSearch(e.target.value)}
-                    placeholder="Name suchen…"
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-red-500"
-                  />
-                  {filtered.length === 0 ? (
-                    <div className="text-center py-6">
-                      <div className="text-3xl mb-2">🤔</div>
-                      <p className="text-sm text-gray-600 mb-1">
-                        {slots.length===0 ? 'Für dein Team wurden noch keine Spieler angelegt.' : 'Kein passender Name gefunden.'}
-                      </p>
-                      <p className="text-xs text-gray-400">Bitte den Trainer, deinen Namen anzulegen.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {filtered.map(s=>(
-                        <button key={s.id} onClick={()=>{setPendingSlot(s);setDob('');}}
-                          className="w-full flex items-center gap-3 border-2 border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3 text-left transition-all">
-                          <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:s.color||'#CC0000'}}>
-                            {s.number||initials(s.name)}
-                          </div>
-                          <div>
-                            <div className="text-sm font-semibold">{s.name}</div>
-                            <div className="text-xs text-gray-400">{s.position}</div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
+                <div className="space-y-2">
+                  {slots.map(s=>(
+                    <button key={s.id} onClick={()=>claim(s)} disabled={saving}
+                      className="w-full flex items-center gap-3 border border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3 text-left transition-all disabled:opacity-50">
+                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:s.color||'#CC0000'}}>
+                        {s.number||initials(s.name)}
+                      </div>
+                      <div><div className="text-sm font-semibold">{s.name}</div>
+                        <div className="text-xs text-gray-400">{s.position||'—'}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               )}
-              <button onClick={()=>auth.signOut()} className="mt-4 w-full text-xs text-gray-400 hover:text-gray-600 text-center">Abmelden</button>
             </>
           )}
+          <button onClick={()=>auth.signOut()} className="w-full text-xs text-gray-400 hover:text-gray-600 text-center pt-1">Abmelden</button>
         </div>
       </div>
     </div>
