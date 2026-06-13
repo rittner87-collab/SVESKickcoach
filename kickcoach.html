@@ -2524,6 +2524,7 @@ function TrainerApp({profile}) {
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
     {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
+    {section:'Konto',   items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
 
   // Team name lookup
@@ -2562,6 +2563,7 @@ function TrainerApp({profile}) {
     dokumente:          <TrainerDokumente/>,
     vorstand:           <TrainerNachrichtAnVorstand profile={profile}/>,
     benachrichtigungen: <TrainerBenachrichtigungen profile={profile}/>,
+    profil:             <ProfilPage profile={profile}/>,
   };
 
   return (
@@ -2897,9 +2899,17 @@ function PlayerStats({profile}) {
   const tNone  = totalSessions - trainingAtt.length;
   const tRate  = totalSessions>0 ? Math.round((tYes/totalSessions)*100) : null;
 
-  // Trainer-Bewertungen
-  const avg = ratings.length>0 ? (ratings.reduce((s,r)=>s+r.avg,0)/ratings.length).toFixed(2) : null;
-  const catAvgs = RATING_CATS.map(cat=>({cat,val:ratings.length>0?(ratings.reduce((s,r)=>s+(r.scores?.[cat]||0),0)/ratings.length).toFixed(1):null}));
+  // Bewertungen aufteilen: Spiel-Feedback vs. allgemeine Beurteilungen
+  const gameRatings    = ratings.filter(r=>r.type==='game');
+  const generalRatings = ratings.filter(r=>r.type!=='game');
+
+  // Gesamtbewertung Spiel-Feedback
+  const gameAvg = gameRatings.length>0 ? (gameRatings.reduce((s,r)=>s+r.avg,0)/gameRatings.length).toFixed(1) : null;
+  const gameCatAvgs = RATING_CATS.map(cat=>({cat,val:gameRatings.length>0?(gameRatings.reduce((s,r)=>s+(r.scores?.[cat]||0),0)/gameRatings.length).toFixed(1):null}));
+
+  // Allgemeine Trainer-Bewertungen
+  const avg = generalRatings.length>0 ? (generalRatings.reduce((s,r)=>s+r.avg,0)/generalRatings.length).toFixed(2) : null;
+  const catAvgs = RATING_CATS.map(cat=>({cat,val:generalRatings.length>0?(generalRatings.reduce((s,r)=>s+(r.scores?.[cat]||0),0)/generalRatings.length).toFixed(1):null}));
 
   const StatBar = ({pct, color='bg-red-500'}) => (
     <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -2957,13 +2967,36 @@ function PlayerStats({profile}) {
         <div className="text-[11px] text-gray-400 mt-2">{totalSessions} Trainingseinheiten insgesamt</div>
       </div>
 
-      {/* ── TRAINER-BEWERTUNGEN ── */}
-      {ratings.length>0 && (
+      {/* ── SPIEL-FEEDBACK GESAMTBEWERTUNG ── */}
+      {gameRatings.length>0 && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4">
-          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">⭐ Trainer-Bewertungen</div>
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">🏆 Spiel-Feedback Gesamtbewertung</div>
+          <div className="text-center mb-4">
+            <div className="text-4xl font-bold text-amber-500">{gameAvg}</div>
+            <div className="flex justify-center gap-0.5 my-1">
+              {[1,2,3,4,5].map(i=>(
+                <span key={i} className={`text-lg ${i<=Math.round(gameAvg)?'text-amber-400':'text-gray-200'}`}>★</span>
+              ))}
+            </div>
+            <div className="text-xs text-gray-400">{gameRatings.length} Spiel{gameRatings.length!==1?'e':''} bewertet · Schnitt /5</div>
+          </div>
+          {gameCatAvgs.map(({cat,val})=>(
+            <div key={cat} className="flex items-center gap-3 mb-2">
+              <div className="w-20 text-xs text-gray-600">{cat}</div>
+              <StatBar pct={(val/5)*100} color="bg-amber-400"/>
+              <div className="text-xs font-bold text-gray-800 w-6 text-right">{val}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── ALLGEMEINE TRAINER-BEWERTUNGEN ── */}
+      {generalRatings.length>0 && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4">
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">⭐ Trainer-Beurteilungen</div>
           <div className="text-center mb-4">
             <div className="text-4xl font-bold text-red-600">{avg}</div>
-            <div className="text-xs text-gray-400 mt-1">{ratings.length} Beurteilung{ratings.length!==1?'en':''} · Schnitt /5</div>
+            <div className="text-xs text-gray-400 mt-1">{generalRatings.length} Beurteilung{generalRatings.length!==1?'en':''} · Schnitt /5</div>
           </div>
           {catAvgs.map(({cat,val})=>(
             <div key={cat} className="flex items-center gap-3 mb-2">
@@ -2973,7 +3006,7 @@ function PlayerStats({profile}) {
             </div>
           ))}
           <div className="mt-3 border-t border-gray-100 pt-3 space-y-1">
-            {ratings.slice(0,5).map(r=>(
+            {generalRatings.slice(0,5).map(r=>(
               <div key={r.id} className="flex justify-between items-center text-xs">
                 <span className="text-gray-500">{r.date}</span>
                 {r.notes&&<span className="text-gray-400 italic truncate mx-2 flex-1">{r.notes}</span>}
@@ -2984,7 +3017,7 @@ function PlayerStats({profile}) {
         </div>
       )}
 
-      {ratings.length===0 && totalGames===0 && totalSessions===0 && (
+      {gameRatings.length===0 && generalRatings.length===0 && totalGames===0 && totalSessions===0 && (
         <div className="text-center text-gray-400 py-16">
           <div className="text-4xl mb-2">📊</div>
           <p className="text-sm">Noch keine Daten vorhanden.</p>
@@ -3135,6 +3168,7 @@ function PlayerApp({profile}) {
     {id:'stats',    icon:'📊',label:'Stats'},
     {id:'chat',     icon:'💬',label:'Chat'},
     {id:'news',     icon:'📢',label:'News'},
+    {id:'profil',   icon:'👤',label:'Profil'},
   ]}];
 
   const content = {
@@ -3145,6 +3179,7 @@ function PlayerApp({profile}) {
     stats:    <PlayerStats profile={profile}/>,
     chat:     <ChatPage profile={profile} accent="red"/>,
     news:     <PlayerNews/>,
+    profil:   <ProfilPage profile={profile}/>,
   };
 
   return (
@@ -6500,6 +6535,9 @@ function AdminApp({profile}) {
     {section:'Einstellungen', items:[
       {id:'emailSettings', icon:'✉️',  label:'E-Mail Setup'},
     ]},
+    {section:'Konto', items:[
+      {id:'profil', icon:'👤', label:'Profil'},
+    ]},
   ];
 
   const content = {
@@ -6518,6 +6556,7 @@ function AdminApp({profile}) {
     sponsoren:          <AdminSponsoren show={show}/>,
     aufgaben:           <AdminAufgaben profile={profile} show={show}/>,
     emailSettings:      <EmailSettings show={show}/>,
+    profil:             <ProfilPage profile={profile}/>,
   };
 
   return (
@@ -6593,13 +6632,16 @@ function DualApp({profile}) {
     {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
     {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+    {section:'Konto',    items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
   const playerNav = [{section:'', items:[
-    {id:'training',icon:'📅',label:'Training'},
-    {id:'wellness',icon:'💪',label:'Wellness'},
-    {id:'stats',   icon:'📊',label:'Stats'},
-    {id:'chat',    icon:'💬',label:'Chat'},
-    {id:'news',    icon:'📢',label:'News'},
+    {id:'training', icon:'📅',label:'Training'},
+    {id:'feedback', icon:'⭐',label:'Feedback'},
+    {id:'wellness', icon:'💪',label:'Wellness'},
+    {id:'stats',    icon:'📊',label:'Stats'},
+    {id:'chat',     icon:'💬',label:'Chat'},
+    {id:'news',     icon:'📢',label:'News'},
+    {id:'profil',   icon:'👤',label:'Profil'},
   ]}];
 
   const [page, setPage] = useState(mode==='trainer' ? 'kader' : 'training');
@@ -6622,13 +6664,16 @@ function DualApp({profile}) {
     verletzungen: <TrainerVerletzungen profile={trainerProfile} show={show}/>,
     beurteilungen: <TrainerBeurteilungen profile={trainerProfile} show={show}/>,
     chat: <ChatPage profile={trainerProfile}/>,
+    profil: <ProfilPage profile={profile}/>,
   };
   const playerContent = {
     training: <PlayerTraining profile={playerProfile}/>,
+    feedback: <PlayerFeedback profile={playerProfile}/>,
     wellness: <PlayerWellness profile={playerProfile}/>,
     stats: <PlayerStats profile={playerProfile}/>,
     chat: <ChatPage profile={playerProfile}/>,
     news: <PlayerNews/>,
+    profil: <ProfilPage profile={profile}/>,
   };
 
   // Umschalter wird oben in der Sidebar eingeblendet
@@ -7267,6 +7312,114 @@ function DatenschutzModal({onClose}) {
         <div className="px-5 py-3 border-t border-gray-100 flex-shrink-0">
           <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-gray-900 text-white text-sm font-semibold">Schließen</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PROFIL-SEITE (Passwort & E-Mail ändern — für alle Nutzer)
+// ═══════════════════════════════════════════════════════════════════
+function ProfilPage({profile}) {
+  const user = firebase.auth().currentUser;
+  const [emailForm,  setEmailForm]  = useState({newEmail:'', currentPw:''});
+  const [pwForm,     setPwForm]     = useState({currentPw:'', newPw:'', confirmPw:''});
+  const [emailMsg,   setEmailMsg]   = useState(null); // {ok, text}
+  const [pwMsg,      setPwMsg]      = useState(null);
+  const [emailBusy,  setEmailBusy]  = useState(false);
+  const [pwBusy,     setPwBusy]     = useState(false);
+
+  const reauth = async (pw) => {
+    const cred = firebase.auth.EmailAuthProvider.credential(user.email, pw);
+    await user.reauthenticateWithCredential(cred);
+  };
+
+  const changeEmail = async (e) => {
+    e.preventDefault(); setEmailMsg(null); setEmailBusy(true);
+    try {
+      await reauth(emailForm.currentPw);
+      await user.updateEmail(emailForm.newEmail);
+      await col('users').doc(user.uid).update({email: emailForm.newEmail});
+      setEmailMsg({ok:true, text:'E-Mail erfolgreich geändert ✅'});
+      setEmailForm({newEmail:'', currentPw:''});
+    } catch(err) {
+      const msg = err.code==='auth/wrong-password' ? 'Falsches aktuelles Passwort.'
+                : err.code==='auth/email-already-in-use' ? 'Diese E-Mail wird bereits verwendet.'
+                : err.code==='auth/invalid-email' ? 'Ungültige E-Mail-Adresse.'
+                : err.message;
+      setEmailMsg({ok:false, text:msg});
+    }
+    setEmailBusy(false);
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault(); setPwMsg(null);
+    if(pwForm.newPw !== pwForm.confirmPw) { setPwMsg({ok:false, text:'Passwörter stimmen nicht überein.'}); return; }
+    if(pwForm.newPw.length < 6) { setPwMsg({ok:false, text:'Passwort muss mindestens 6 Zeichen haben.'}); return; }
+    setPwBusy(true);
+    try {
+      await reauth(pwForm.currentPw);
+      await user.updatePassword(pwForm.newPw);
+      setPwMsg({ok:true, text:'Passwort erfolgreich geändert ✅'});
+      setPwForm({currentPw:'', newPw:'', confirmPw:''});
+    } catch(err) {
+      const msg = err.code==='auth/wrong-password' ? 'Falsches aktuelles Passwort.' : err.message;
+      setPwMsg({ok:false, text:msg});
+    }
+    setPwBusy(false);
+  };
+
+  const MsgBox = ({msg}) => msg ? (
+    <div className={`text-xs rounded-lg px-3 py-2 mb-3 ${msg.ok?'bg-green-50 text-green-700':'bg-red-50 text-red-700'}`}>{msg.text}</div>
+  ) : null;
+
+  const PwInp = ({label, field, form, setForm}) => (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <input type="password" value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))}
+        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" required/>
+    </div>
+  );
+
+  return (
+    <div className="p-4 max-w-md space-y-5">
+      <h1 className="text-lg font-semibold">👤 Profil</h1>
+
+      {/* Info */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4">
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Konto-Info</div>
+        <div className="space-y-1.5 text-sm">
+          <div className="flex gap-2"><span className="text-gray-400 w-16">Name</span><span className="font-medium">{profile.name}</span></div>
+          <div className="flex gap-2"><span className="text-gray-400 w-16">E-Mail</span><span className="font-medium">{user?.email}</span></div>
+          <div className="flex gap-2"><span className="text-gray-400 w-16">Rolle</span><span className="font-medium capitalize">{profile.role}</span></div>
+        </div>
+      </div>
+
+      {/* E-Mail ändern */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4">
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">E-Mail ändern</div>
+        <MsgBox msg={emailMsg}/>
+        <form onSubmit={changeEmail} className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Neue E-Mail-Adresse</label>
+            <input type="email" value={emailForm.newEmail} onChange={e=>setEmailForm(f=>({...f,newEmail:e.target.value}))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" required/>
+          </div>
+          <PwInp label="Aktuelles Passwort zur Bestätigung" field="currentPw" form={emailForm} setForm={setEmailForm}/>
+          <Btn type="submit" className="w-full" disabled={emailBusy}>{emailBusy?'Speichert…':'E-Mail ändern'}</Btn>
+        </form>
+      </div>
+
+      {/* Passwort ändern */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4">
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Passwort ändern</div>
+        <MsgBox msg={pwMsg}/>
+        <form onSubmit={changePassword} className="space-y-3">
+          <PwInp label="Aktuelles Passwort" field="currentPw" form={pwForm} setForm={setPwForm}/>
+          <PwInp label="Neues Passwort (min. 6 Zeichen)" field="newPw" form={pwForm} setForm={setPwForm}/>
+          <PwInp label="Neues Passwort bestätigen" field="confirmPw" form={pwForm} setForm={setPwForm}/>
+          <Btn type="submit" className="w-full" disabled={pwBusy}>{pwBusy?'Speichert…':'Passwort ändern'}</Btn>
+        </form>
       </div>
     </div>
   );
