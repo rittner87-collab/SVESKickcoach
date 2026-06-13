@@ -2669,9 +2669,11 @@ function PlayerTraining({profile}) {
 //  SPIELER — SPIELTAGE (RSVP + MITFAHRT)
 // ═══════════════════════════════════════════════════════════════════
 function PlayerSpiele({profile}) {
-  const [games,  setGames]  = useState([]);
-  const [myRsvp, setMyRsvp] = useState({}); // gameId → {status, mitfahrt}
-  const [saving, setSaving] = useState({});
+  const [games,     setGames]     = useState([]);
+  const [myRsvp,    setMyRsvp]    = useState({}); // gameId → {status, mitfahrt}
+  const [myRatings, setMyRatings] = useState({}); // gameId → rating doc
+  const [saving,    setSaving]    = useState({});
+  const [detailRating, setDetailRating] = useState(null);
 
   useEffect(()=>{
     const u1 = col('games').where('teamId','==',profile.teamId)
@@ -2682,7 +2684,14 @@ function PlayerSpiele({profile}) {
         s.docs.forEach(d=>{const r=d.data(); map[r.gameId]={status:r.status,mitfahrt:r.mitfahrt,docId:d.id};});
         setMyRsvp(map);
       });
-    return ()=>{u1();u2();};
+    // Trainer-Feedback für diesen Spieler laden (kein Composite-Index nötig)
+    const u3 = col('ratings').where('playerId','==',profile.id)
+      .onSnapshot(s=>{
+        const map={};
+        s.docs.forEach(d=>{const r={id:d.id,...d.data()}; if(r.type==='game'&&r.gameId) map[r.gameId]=r;});
+        setMyRatings(map);
+      });
+    return ()=>{u1();u2();u3();};
   },[]);
 
   const saveRsvp = async (gameId, patch) => {
@@ -2768,13 +2777,82 @@ function PlayerSpiele({profile}) {
           </>}
           {past.length>0&&<>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
-            {past.map(g=>(
-              <div key={g.id} className="bg-gray-50 border border-gray-200 rounded-xl p-3 opacity-60 text-sm flex justify-between">
-                <span>vs. {g.opponent}</span>
-                <span className="text-xs text-gray-400">{fmtDate(g.date)}</span>
-              </div>
-            ))}
+            {past.map(g=>{
+              const fb = myRatings[g.id];
+              return (
+                <div key={g.id} className={`bg-white border rounded-xl overflow-hidden ${fb?'border-amber-200':'border-gray-200'}`}>
+                  <div className="p-3 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">vs. {g.opponent}</div>
+                      <div className="text-xs text-gray-400">{fmtDate(g.date)}{g.ergebnis?' · '+g.ergebnis:''}</div>
+                    </div>
+                    {fb ? (
+                      <button onClick={()=>setDetailRating(fb)}
+                        className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 hover:bg-amber-100 transition-colors">
+                        <span className="text-amber-500 text-base">★</span>
+                        <span className="text-sm font-bold text-amber-600">{fb.avg}</span>
+                        <span className="text-[10px] text-amber-500 font-semibold">Feedback</span>
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-gray-300">kein Feedback</span>
+                    )}
+                  </div>
+                  {fb && (
+                    <div className="px-3 pb-3 flex gap-3 border-t border-amber-100 pt-2">
+                      {RATING_CATS.map(cat=>(
+                        <div key={cat} className="flex-1 text-center">
+                          <div className="text-xs font-bold text-amber-600">{fb.scores?.[cat]??'—'}</div>
+                          <div className="text-[9px] text-gray-400">{cat.slice(0,3)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </>}
+        </div>
+      )}
+
+      {/* Feedback-Detail-Modal */}
+      {detailRating && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={()=>setDetailRating(null)}>
+          <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl shadow-2xl" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <div className="font-bold">vs. {detailRating.gameOpponent||'—'}</div>
+                <div className="text-xs text-gray-400">{fmtDate(detailRating.gameDate)}{detailRating.trainerName?' · '+detailRating.trainerName:''}</div>
+              </div>
+              <button onClick={()=>setDetailRating(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500">✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="text-center">
+                <div className="text-5xl font-bold text-amber-500">{detailRating.avg}</div>
+                <div className="flex justify-center gap-0.5 my-1">
+                  {[1,2,3,4,5].map(i=><span key={i} className={`text-xl ${i<=Math.round(detailRating.avg)?'text-amber-400':'text-gray-200'}`}>★</span>)}
+                </div>
+                <div className="text-sm text-gray-400">Gesamtbewertung / 5</div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-4 space-y-2.5">
+                {RATING_CATS.map(cat=>(
+                  <div key={cat} className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-20">{cat}</span>
+                    <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-amber-400 rounded-full" style={{width:`${((detailRating.scores?.[cat]||0)/5)*100}%`}}/>
+                    </div>
+                    <span className="text-sm font-bold text-gray-800 w-4 text-right">{detailRating.scores?.[cat]??'—'}</span>
+                  </div>
+                ))}
+              </div>
+              {detailRating.notes && (
+                <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                  <div className="text-xs font-semibold text-blue-600 mb-1">💬 Kommentar</div>
+                  <p className="text-sm text-gray-700 leading-relaxed">{detailRating.notes}</p>
+                </div>
+              )}
+              <Btn className="w-full" onClick={()=>setDetailRating(null)}>Schließen</Btn>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -3035,9 +3113,16 @@ function PlayerFeedback({profile}) {
   const [detail,  setDetail]  = useState(null);
 
   useEffect(()=>{
-    return col('ratings').where('playerId','==',profile.id).where('type','==','game')
-      .orderBy('createdAt','desc')
-      .onSnapshot(s=>setRatings(s.docs.map(d=>({id:d.id,...d.data()}))));
+    // Nur nach playerId filtern (kein Composite-Index nötig),
+    // type-Filter und Sortierung im Client
+    return col('ratings').where('playerId','==',profile.id)
+      .onSnapshot(s=>{
+        const all = s.docs.map(d=>({id:d.id,...d.data()}));
+        const game = all
+          .filter(r=>r.type==='game')
+          .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+        setRatings(game);
+      });
   },[]);
 
   const StarRow = ({scores}) => (
