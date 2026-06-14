@@ -2691,6 +2691,471 @@ function ChatPage({profile, accent='red'}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  MANNSCHAFTSKASSE — TRAINER
+// ═══════════════════════════════════════════════════════════════════
+function TrainerKasse({profile, show}) {
+  const [tab,         setTab]         = useState('uebersicht'); // uebersicht|katalog|strafen|buch
+  const [players,     setPlayers]     = useState([]);
+  const [katalog,     setKatalog]     = useState([]);
+  const [strafen,     setStrafen]     = useState([]);
+  const [buch,        setBuch]        = useState([]);
+
+  // Katalog-Formular
+  const EK = {name:'', amount:'', description:''};
+  const [katForm,     setKatForm]     = useState(EK);
+  const [katEditing,  setKatEditing]  = useState(null);
+  const [katOpen,     setKatOpen]     = useState(false);
+
+  // Strafe zuweisen
+  const ES = {playerId:'', fineName:'', amount:'', note:''};
+  const [strafForm,   setStrafForm]   = useState(ES);
+  const [strafOpen,   setStrafOpen]   = useState(false);
+
+  // Kassenbuch-Eintrag
+  const EB = {type:'einnahme', amount:'', description:'', date: new Date().toISOString().slice(0,10)};
+  const [buchForm,    setBuchForm]    = useState(EB);
+  const [buchOpen,    setBuchOpen]    = useState(false);
+
+  // Filter Strafen
+  const [filterSt, setFilterSt] = useState('offen'); // offen|bezahlt|alle
+
+  useEffect(()=>{
+    const u1 = col('users').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='player'||p.role==='dual').sort((a,b)=>a.name?.localeCompare(b.name||''))));
+    const u2 = col('fines').where('teamId','==',profile.teamId).orderBy('createdAt','desc')
+      .onSnapshot(s=>setKatalog(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3 = col('playerFines').where('teamId','==',profile.teamId).orderBy('assignedAt','desc')
+      .onSnapshot(s=>setStrafen(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u4 = col('kassenbuch').where('teamId','==',profile.teamId).orderBy('date','desc')
+      .onSnapshot(s=>setBuch(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();u3();u4();};
+  },[]);
+
+  // Kassenstand berechnen
+  const paid       = strafen.filter(s=>s.paid);
+  const strafSum   = paid.reduce((s,x)=>s+Number(x.amount||0), 0);
+  const einnahmen  = buch.filter(b=>b.type==='einnahme').reduce((s,x)=>s+Number(x.amount||0),0);
+  const ausgaben   = buch.filter(b=>b.type==='ausgabe').reduce((s,x)=>s+Number(x.amount||0),0);
+  const kassenstand = strafSum + einnahmen - ausgaben;
+  const offenSum   = strafen.filter(s=>!s.paid).reduce((s,x)=>s+Number(x.amount||0),0);
+
+  const fmt = (n) => Number(n).toFixed(2).replace('.',',') + ' €';
+
+  // Katalog speichern
+  const saveKat = async (e) => {
+    e.preventDefault();
+    const data = {teamId:profile.teamId, name:katForm.name, amount:Number(katForm.amount), description:katForm.description, createdAt:ts()};
+    if(katEditing) await col('fines').doc(katEditing).update(data);
+    else           await col('fines').add(data);
+    show(katEditing?'Aktualisiert ✅':'Strafe hinzugefügt ✅');
+    setKatForm(EK); setKatEditing(null); setKatOpen(false);
+  };
+  const deleteKat = async (id) => {
+    if(!window.confirm('Strafe aus Katalog löschen?')) return;
+    await col('fines').doc(id).delete();
+    show('Gelöscht');
+  };
+
+  // Strafe zuweisen
+  const saveStraf = async (e) => {
+    e.preventDefault();
+    const player = players.find(p=>p.id===strafForm.playerId);
+    await col('playerFines').add({
+      teamId: profile.teamId,
+      playerId: strafForm.playerId,
+      playerName: player?.name||'',
+      fineName: strafForm.fineName,
+      amount: Number(strafForm.amount),
+      note: strafForm.note,
+      paid: false,
+      assignedAt: ts(),
+      assignedBy: profile.name,
+    });
+    show('Strafe eingetragen ✅');
+    setStrafForm(ES); setStrafOpen(false);
+  };
+  const togglePaid = async (straf) => {
+    await col('playerFines').doc(straf.id).update({paid:!straf.paid, paidAt: !straf.paid ? ts() : null});
+  };
+  const deleteStraf = async (id) => {
+    if(!window.confirm('Strafe wirklich löschen?')) return;
+    await col('playerFines').doc(id).delete();
+    show('Strafe gelöscht');
+  };
+
+  // Kassenbuch
+  const saveBuch = async (e) => {
+    e.preventDefault();
+    await col('kassenbuch').add({
+      teamId: profile.teamId,
+      type: buchForm.type,
+      amount: Number(buchForm.amount),
+      description: buchForm.description,
+      date: buchForm.date,
+      createdAt: ts(),
+      addedBy: profile.name,
+    });
+    show('Eintrag gespeichert ✅');
+    setBuchForm(EB); setBuchOpen(false);
+  };
+  const deleteBuch = async (id) => {
+    if(!window.confirm('Eintrag löschen?')) return;
+    await col('kassenbuch').doc(id).delete();
+    show('Gelöscht');
+  };
+
+  const TabBtn = ({id, label}) => (
+    <button onClick={()=>setTab(id)}
+      className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tab===id?'bg-red-600 text-white':'text-gray-500 hover:text-gray-700'}`}>
+      {label}
+    </button>
+  );
+
+  const filteredStrafen = strafen.filter(s=>{
+    if(filterSt==='offen')   return !s.paid;
+    if(filterSt==='bezahlt') return s.paid;
+    return true;
+  });
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-semibold mb-3">💰 Mannschaftskasse</h1>
+
+      {/* Tab-Navigation */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4">
+        <TabBtn id="uebersicht" label="Übersicht"/>
+        <TabBtn id="katalog"   label="Katalog"/>
+        <TabBtn id="strafen"   label="Strafen"/>
+        <TabBtn id="buch"      label="Kassenbuch"/>
+      </div>
+
+      {/* ── ÜBERSICHT ── */}
+      {tab==='uebersicht' && (
+        <div className="space-y-4">
+          {/* Kassenstand */}
+          <div className="bg-gradient-to-br from-red-600 to-red-700 rounded-2xl p-5 text-white text-center shadow-lg">
+            <div className="text-xs font-semibold uppercase tracking-wider opacity-80 mb-1">Kassenstand</div>
+            <div className="text-4xl font-bold">{fmt(kassenstand)}</div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <div className="text-lg font-bold text-green-600">{fmt(strafSum+einnahmen)}</div>
+              <div className="text-[10px] text-gray-400 mt-0.5">Einnahmen gesamt</div>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <div className="text-lg font-bold text-red-500">{fmt(ausgaben)}</div>
+              <div className="text-[10px] text-gray-400 mt-0.5">Ausgaben gesamt</div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+              <div className="text-lg font-bold text-amber-600">{fmt(offenSum)}</div>
+              <div className="text-[10px] text-amber-500 mt-0.5">Offen</div>
+            </div>
+          </div>
+
+          {/* Offene Strafen Top */}
+          {strafen.filter(s=>!s.paid).length>0 && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-4">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">⚠️ Offene Strafen ({strafen.filter(s=>!s.paid).length})</div>
+              <div className="space-y-2">
+                {strafen.filter(s=>!s.paid).slice(0,5).map(s=>(
+                  <div key={s.id} className="flex items-center gap-2 text-sm">
+                    <div className="flex-1">
+                      <span className="font-medium">{s.playerName}</span>
+                      <span className="text-gray-400 ml-1">— {s.fineName}</span>
+                    </div>
+                    <span className="font-bold text-red-600">{fmt(s.amount)}</span>
+                    <button onClick={()=>togglePaid(s)} className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold hover:bg-green-200">✓ Zahlt</button>
+                  </div>
+                ))}
+                {strafen.filter(s=>!s.paid).length>5 && <div className="text-xs text-gray-400 text-center">+ {strafen.filter(s=>!s.paid).length-5} weitere</div>}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Btn size="sm" className="flex-1" onClick={()=>{setStrafForm(ES);setStrafOpen(true)}}>+ Strafe eintragen</Btn>
+            <Btn size="sm" variant="secondary" className="flex-1" onClick={()=>{setBuchForm(EB);setBuchOpen(true)}}>+ Kasseneintrag</Btn>
+          </div>
+        </div>
+      )}
+
+      {/* ── STRAFKATALOG ── */}
+      {tab==='katalog' && (
+        <div className="space-y-3">
+          <Btn size="sm" onClick={()=>{setKatForm(EK);setKatEditing(null);setKatOpen(true)}}>+ Strafe anlegen</Btn>
+          {katalog.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Noch keine Strafen im Katalog.</div>}
+          {katalog.map(k=>(
+            <div key={k.id} className="bg-white border border-gray-200 rounded-xl p-3 flex items-start gap-3">
+              <div className="flex-1">
+                <div className="text-sm font-semibold">{k.name}</div>
+                {k.description && <div className="text-xs text-gray-400 mt-0.5">{k.description}</div>}
+              </div>
+              <div className="text-sm font-bold text-red-600 flex-shrink-0">{fmt(k.amount)}</div>
+              <div className="flex gap-1 flex-shrink-0">
+                <button onClick={()=>{setKatForm({name:k.name,amount:String(k.amount),description:k.description||''});setKatEditing(k.id);setKatOpen(true)}}
+                  className="text-xs text-gray-400 hover:text-red-600 px-1.5 py-0.5 rounded">✏️</button>
+                <button onClick={()=>deleteKat(k.id)} className="text-xs text-gray-400 hover:text-red-600 px-1.5 py-0.5 rounded">🗑</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── STRAFEN ── */}
+      {tab==='strafen' && (
+        <div className="space-y-3">
+          <div className="flex gap-2 items-center">
+            <Btn size="sm" onClick={()=>{setStrafForm(ES);setStrafOpen(true)}}>+ Strafe eintragen</Btn>
+            <div className="flex gap-1 ml-auto">
+              {['offen','bezahlt','alle'].map(f=>(
+                <button key={f} onClick={()=>setFilterSt(f)}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold capitalize transition-all ${filterSt===f?'bg-red-600 text-white':'bg-gray-100 text-gray-500'}`}>{f}</button>
+              ))}
+            </div>
+          </div>
+          {filteredStrafen.length===0 && <div className="text-center text-gray-400 py-10 text-sm">Keine Einträge.</div>}
+          {filteredStrafen.map(s=>(
+            <div key={s.id} className={`bg-white border rounded-xl p-3 ${s.paid?'border-green-200 opacity-70':'border-gray-200'}`}>
+              <div className="flex items-start gap-2">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">{s.playerName}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${s.paid?'bg-green-100 text-green-700':'bg-amber-100 text-amber-700'}`}>
+                      {s.paid?'Bezahlt':'Offen'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5">{s.fineName}{s.note?' · '+s.note:''}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">{s.assignedAt?.toDate?.()?.toLocaleDateString('de-DE')||''}  {s.assignedBy?'· von '+s.assignedBy:''}</div>
+                </div>
+                <div className="text-sm font-bold text-red-600 flex-shrink-0">{fmt(s.amount)}</div>
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button onClick={()=>togglePaid(s)}
+                  className={`flex-1 text-xs py-1.5 rounded-lg font-semibold transition-all ${s.paid?'bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-700':'bg-green-100 text-green-700 hover:bg-green-200'}`}>
+                  {s.paid?'↩ Als offen markieren':'✓ Als bezahlt markieren'}
+                </button>
+                <button onClick={()=>deleteStraf(s.id)} className="text-xs px-3 py-1.5 rounded-lg bg-gray-100 text-gray-400 hover:bg-red-50 hover:text-red-600 transition-all">🗑</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── KASSENBUCH ── */}
+      {tab==='buch' && (
+        <div className="space-y-3">
+          <Btn size="sm" onClick={()=>{setBuchForm(EB);setBuchOpen(true)}}>+ Eintrag hinzufügen</Btn>
+          {buch.length===0 && strafen.filter(s=>s.paid).length===0 && (
+            <div className="text-center text-gray-400 py-10 text-sm">Noch keine Einträge.</div>
+          )}
+          {/* Bezahlte Strafen als Einnahmen */}
+          {paid.map(s=>(
+            <div key={'s-'+s.id} className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2">
+              <div className="flex-1">
+                <div className="text-xs font-semibold text-green-800">Strafe: {s.playerName}</div>
+                <div className="text-[10px] text-green-600">{s.fineName}{s.note?' · '+s.note:''}</div>
+              </div>
+              <div className="text-sm font-bold text-green-700">+{fmt(s.amount)}</div>
+            </div>
+          ))}
+          {/* Manuelle Kassenbuch-Einträge */}
+          {buch.map(b=>(
+            <div key={b.id} className={`border rounded-xl p-3 flex items-center gap-2 ${b.type==='einnahme'?'bg-green-50 border-green-200':'bg-red-50 border-red-200'}`}>
+              <div className="flex-1">
+                <div className={`text-xs font-semibold ${b.type==='einnahme'?'text-green-800':'text-red-800'}`}>{b.description}</div>
+                <div className="text-[10px] text-gray-400">{b.date}{b.addedBy?' · '+b.addedBy:''}</div>
+              </div>
+              <div className={`text-sm font-bold flex-shrink-0 ${b.type==='einnahme'?'text-green-700':'text-red-600'}`}>
+                {b.type==='einnahme'?'+':'-'}{fmt(b.amount)}
+              </div>
+              <button onClick={()=>deleteBuch(b.id)} className="text-gray-300 hover:text-red-500 text-xs px-1">🗑</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── MODAL: Katalog ── */}
+      {katOpen && (
+        <Modal title={katEditing?'Strafe bearbeiten':'Strafe anlegen'} onClose={()=>{setKatOpen(false);setKatEditing(null);}}>
+          <form onSubmit={saveKat}>
+            <Inp label="Bezeichnung" value={katForm.name} onChange={e=>setKatForm(f=>({...f,name:e.target.value}))} placeholder="z.B. Zu spät erschienen" required/>
+            <Inp label="Betrag (€)" type="number" step="0.01" min="0" value={katForm.amount} onChange={e=>setKatForm(f=>({...f,amount:e.target.value}))} placeholder="5.00" required/>
+            <Inp label="Beschreibung (optional)" value={katForm.description} onChange={e=>setKatForm(f=>({...f,description:e.target.value}))} placeholder="Details zur Strafe"/>
+            <div className="flex gap-2">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>{setKatOpen(false);setKatEditing(null);}}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1">Speichern</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ── MODAL: Strafe zuweisen ── */}
+      {strafOpen && (
+        <Modal title="Strafe eintragen" onClose={()=>setStrafOpen(false)}>
+          <form onSubmit={saveStraf}>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Spieler</label>
+              <select value={strafForm.playerId} onChange={e=>setStrafForm(f=>({...f,playerId:e.target.value}))}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" required>
+                <option value="">Spieler wählen…</option>
+                {players.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Strafe aus Katalog (oder manuell eingeben)</label>
+              <select onChange={e=>{
+                const k=katalog.find(x=>x.id===e.target.value);
+                if(k) setStrafForm(f=>({...f,fineName:k.name,amount:String(k.amount)}));
+              }} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 mb-2">
+                <option value="">Aus Katalog wählen…</option>
+                {katalog.map(k=><option key={k.id} value={k.id}>{k.name} ({fmt(k.amount)})</option>)}
+              </select>
+            </div>
+            <Inp label="Bezeichnung" value={strafForm.fineName} onChange={e=>setStrafForm(f=>({...f,fineName:e.target.value}))} placeholder="z.B. Zu spät erschienen" required/>
+            <Inp label="Betrag (€)" type="number" step="0.01" min="0" value={strafForm.amount} onChange={e=>setStrafForm(f=>({...f,amount:e.target.value}))} placeholder="5.00" required/>
+            <Inp label="Notiz (optional)" value={strafForm.note} onChange={e=>setStrafForm(f=>({...f,note:e.target.value}))} placeholder="z.B. 10 Min zu spät"/>
+            <div className="flex gap-2">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setStrafOpen(false)}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1">Eintragen</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ── MODAL: Kassenbuch ── */}
+      {buchOpen && (
+        <Modal title="Kasseneintrag" onClose={()=>setBuchOpen(false)}>
+          <form onSubmit={saveBuch}>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Typ</label>
+              <div className="flex gap-2">
+                {[{v:'einnahme',l:'Einnahme'},{v:'ausgabe',l:'Ausgabe'}].map(({v,l})=>(
+                  <button key={v} type="button" onClick={()=>setBuchForm(f=>({...f,type:v}))}
+                    className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all ${buchForm.type===v?v==='einnahme'?'bg-green-600 text-white':'bg-red-600 text-white':'bg-gray-100 text-gray-500'}`}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <Inp label="Beschreibung" value={buchForm.description} onChange={e=>setBuchForm(f=>({...f,description:e.target.value}))} placeholder="z.B. Trikots, Turnier-Startgeld…" required/>
+            <Inp label="Betrag (€)" type="number" step="0.01" min="0" value={buchForm.amount} onChange={e=>setBuchForm(f=>({...f,amount:e.target.value}))} placeholder="0.00" required/>
+            <Inp label="Datum" type="date" value={buchForm.date} onChange={e=>setBuchForm(f=>({...f,date:e.target.value}))} required/>
+            <div className="flex gap-2">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setBuchOpen(false)}>Abbrechen</Btn>
+              <Btn type="submit" className="flex-1">Speichern</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  MANNSCHAFTSKASSE — SPIELER
+// ═══════════════════════════════════════════════════════════════════
+function PlayerKasse({profile}) {
+  const [katalog,  setKatalog]  = useState([]);
+  const [strafen,  setStrafen]  = useState([]);
+  const [buch,     setBuch]     = useState([]);
+
+  useEffect(()=>{
+    const u1 = col('fines').where('teamId','==',profile.teamId).orderBy('createdAt','desc')
+      .onSnapshot(s=>setKatalog(s.docs.map(d=>({id:d.id,...d.data()}))));
+    // Eigene Strafen
+    const u2 = col('playerFines').where('teamId','==',profile.teamId).where('playerId','==',profile.id)
+      .onSnapshot(s=>setStrafen(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.assignedAt?.seconds||0)-(a.assignedAt?.seconds||0))));
+    // Kassenbuch für Kassenstand
+    const u3 = col('kassenbuch').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setBuch(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();u3();};
+  },[]);
+
+  // Kassenstand (alle Team-Strafen nötig für Gesamtstand — aber wir zeigen nur Summe ohne alle Spieler-Strafen)
+  // Wir laden nur über kassenbuch + eigene bezahlte Strafen → für echten Gesamtstand brauchen wir einen snapshot
+  // Einfacher Ansatz: Kassenstand aus Kassenbuch ableiten (Trainer verwaltet den Stand)
+  const einnahmen = buch.filter(b=>b.type==='einnahme').reduce((s,x)=>s+Number(x.amount||0),0);
+  const ausgaben  = buch.filter(b=>b.type==='ausgabe').reduce((s,x)=>s+Number(x.amount||0),0);
+
+  const fmt = (n) => Number(n).toFixed(2).replace('.',',') + ' €';
+  const offen   = strafen.filter(s=>!s.paid);
+  const bezahlt = strafen.filter(s=>s.paid);
+  const offenSum = offen.reduce((s,x)=>s+Number(x.amount||0),0);
+
+  return (
+    <div className="p-4 space-y-4">
+      <h1 className="text-lg font-semibold">💰 Mannschaftskasse</h1>
+
+      {/* Meine offenen Strafen prominent */}
+      {offen.length>0 && (
+        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4">
+          <div className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-3">⚠️ Meine offenen Strafen</div>
+          <div className="space-y-2">
+            {offen.map(s=>(
+              <div key={s.id} className="flex items-center justify-between text-sm">
+                <div>
+                  <div className="font-semibold text-amber-900">{s.fineName}</div>
+                  {s.note && <div className="text-xs text-amber-600">{s.note}</div>}
+                  <div className="text-[10px] text-amber-500">{s.assignedAt?.toDate?.()?.toLocaleDateString('de-DE')||''}</div>
+                </div>
+                <div className="font-bold text-red-600">{fmt(s.amount)}</div>
+              </div>
+            ))}
+            <div className="border-t border-amber-200 pt-2 flex justify-between text-sm font-bold">
+              <span className="text-amber-800">Gesamt offen</span>
+              <span className="text-red-600">{fmt(offenSum)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {offen.length===0 && (
+        <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+          <div className="text-2xl mb-1">✅</div>
+          <div className="text-sm font-semibold text-green-700">Keine offenen Strafen!</div>
+        </div>
+      )}
+
+      {/* Strafkatalog */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4">
+        <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">📋 Strafkatalog</div>
+        {katalog.length===0 ? (
+          <p className="text-xs text-gray-400">Noch kein Strafkatalog vorhanden.</p>
+        ) : (
+          <div className="space-y-2">
+            {katalog.map(k=>(
+              <div key={k.id} className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium">{k.name}</div>
+                  {k.description && <div className="text-xs text-gray-400">{k.description}</div>}
+                </div>
+                <div className="text-sm font-bold text-red-600">{fmt(k.amount)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Bezahlte Strafen */}
+      {bezahlt.length>0 && (
+        <div className="bg-white border border-gray-200 rounded-2xl p-4">
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">✅ Bezahlte Strafen</div>
+          <div className="space-y-2">
+            {bezahlt.map(s=>(
+              <div key={s.id} className="flex items-center justify-between text-sm opacity-70">
+                <div>
+                  <div className="font-medium line-through">{s.fineName}</div>
+                  <div className="text-[10px] text-gray-400">{s.assignedAt?.toDate?.()?.toLocaleDateString('de-DE')||''}</div>
+                </div>
+                <div className="font-bold text-green-600">{fmt(s.amount)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  TRAINER — BENACHRICHTIGUNGEN
 // ═══════════════════════════════════════════════════════════════════
 function TrainerBenachrichtigungen({profile}) {
@@ -2764,7 +3229,7 @@ function TrainerApp({profile}) {
     {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
-    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
+    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'},{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Konto',   items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
 
@@ -2805,6 +3270,7 @@ function TrainerApp({profile}) {
     vorstand:           <TrainerNachrichtAnVorstand profile={profile}/>,
     benachrichtigungen: <TrainerBenachrichtigungen profile={profile}/>,
     spielerstats:       <TrainerSpielerStatistik profile={activeProfile}/>,
+    kasse:              <TrainerKasse profile={activeProfile} show={show}/>,
     profil:             <ProfilPage profile={profile}/>,
   };
 
@@ -3495,6 +3961,7 @@ function PlayerApp({profile}) {
     {id:'stats',    icon:'📊',label:'Stats'},
     {id:'chat',     icon:'💬',label:'Chat'},
     {id:'news',     icon:'📢',label:'News'},
+    {id:'kasse',    icon:'💰',label:'Kasse'},
     {id:'profil',   icon:'👤',label:'Profil'},
   ]}];
 
@@ -3506,6 +3973,7 @@ function PlayerApp({profile}) {
     stats:    <PlayerStats profile={profile}/>,
     chat:     <ChatPage profile={profile} accent="red"/>,
     news:     <PlayerNews/>,
+    kasse:    <PlayerKasse profile={profile}/>,
     profil:   <ProfilPage profile={profile}/>,
   };
 
@@ -6959,6 +7427,7 @@ function DualApp({profile}) {
     {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
     {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+    {section:'Finanzen', items:[{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Konto',    items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
   const playerNav = [{section:'', items:[
@@ -6968,6 +7437,7 @@ function DualApp({profile}) {
     {id:'stats',    icon:'📊',label:'Stats'},
     {id:'chat',     icon:'💬',label:'Chat'},
     {id:'news',     icon:'📢',label:'News'},
+    {id:'kasse',    icon:'💰',label:'Kasse'},
     {id:'profil',   icon:'👤',label:'Profil'},
   ]}];
 
@@ -6991,6 +7461,7 @@ function DualApp({profile}) {
     verletzungen: <TrainerVerletzungen profile={trainerProfile} show={show}/>,
     beurteilungen: <TrainerBeurteilungen profile={trainerProfile} show={show}/>,
     spielerstats:  <TrainerSpielerStatistik profile={trainerProfile}/>,
+    kasse:         <TrainerKasse profile={trainerProfile} show={show}/>,
     chat: <ChatPage profile={trainerProfile}/>,
     profil: <ProfilPage profile={profile}/>,
   };
@@ -7001,6 +7472,7 @@ function DualApp({profile}) {
     stats: <PlayerStats profile={playerProfile}/>,
     chat: <ChatPage profile={playerProfile}/>,
     news: <PlayerNews/>,
+    kasse: <PlayerKasse profile={playerProfile}/>,
     profil: <ProfilPage profile={profile}/>,
   };
 
