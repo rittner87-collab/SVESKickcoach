@@ -2722,12 +2722,12 @@ function TrainerKasse({profile, show}) {
   useEffect(()=>{
     const u1 = col('users').where('teamId','==',profile.teamId)
       .onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='player'||p.role==='dual').sort((a,b)=>a.name?.localeCompare(b.name||''))));
-    const u2 = col('fines').where('teamId','==',profile.teamId).orderBy('createdAt','desc')
-      .onSnapshot(s=>setKatalog(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u3 = col('playerFines').where('teamId','==',profile.teamId).orderBy('assignedAt','desc')
-      .onSnapshot(s=>setStrafen(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u4 = col('kassenbuch').where('teamId','==',profile.teamId).orderBy('date','desc')
-      .onSnapshot(s=>setBuch(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2 = col('fines').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setKatalog(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))));
+    const u3 = col('playerFines').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setStrafen(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.assignedAt?.seconds||0)-(a.assignedAt?.seconds||0))));
+    const u4 = col('kassenbuch').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setBuch(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.date?.localeCompare(a.date||''))));
     return ()=>{u1();u2();u3();u4();};
   },[]);
 
@@ -3058,11 +3058,13 @@ function PlayerKasse({profile}) {
   const [buch,     setBuch]     = useState([]);
 
   useEffect(()=>{
-    const u1 = col('fines').where('teamId','==',profile.teamId).orderBy('createdAt','desc')
-      .onSnapshot(s=>setKatalog(s.docs.map(d=>({id:d.id,...d.data()}))));
-    // Eigene Strafen
-    const u2 = col('playerFines').where('teamId','==',profile.teamId).where('playerId','==',profile.id)
-      .onSnapshot(s=>setStrafen(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.assignedAt?.seconds||0)-(a.assignedAt?.seconds||0))));
+    const u1 = col('fines').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setKatalog(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))));
+    // Eigene Strafen — nur playerId filtern, kein Composite-Index nötig
+    const u2 = col('playerFines').where('playerId','==',profile.id)
+      .onSnapshot(s=>setStrafen(s.docs.map(d=>({id:d.id,...d.data()}))
+        .filter(x=>x.teamId===profile.teamId)
+        .sort((a,b)=>(b.assignedAt?.seconds||0)-(a.assignedAt?.seconds||0))));
     // Kassenbuch für Kassenstand
     const u3 = col('kassenbuch').where('teamId','==',profile.teamId)
       .onSnapshot(s=>setBuch(s.docs.map(d=>({id:d.id,...d.data()}))));
