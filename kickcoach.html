@@ -4495,10 +4495,27 @@ function AdminPinnwand({profile, show}) {
 
   const toggleUser = (uid) => setSelR(prev=>prev.includes(uid)?prev.filter(x=>x!==uid):[...prev,uid]);
 
+  const ROLE_BTNS = [
+    {v:'all',      l:'👥 Alle'},
+    {v:'spieler',  l:'⚽ Spieler'},
+    {v:'trainer',  l:'🏅 Trainer'},
+    {v:'vorstand', l:'🏛 Vorstand'},
+    {v:'select',   l:'✏️ Einzeln'},
+  ];
+  const ROLE_LABELS = {all:'Alle',spieler:'Spieler',trainer:'Trainer',vorstand:'Vorstand'};
+  const getModeIds = (mode) => {
+    if(mode==='all')      return [];
+    if(mode==='spieler')  return allUsers.filter(u=>u.role==='player'||u.role==='dual').map(u=>u.id);
+    if(mode==='trainer')  return allUsers.filter(u=>['trainer','dual','vorstand_trainer'].includes(u.role)).map(u=>u.id);
+    if(mode==='vorstand') return allUsers.filter(u=>['vorstand','vorstand_trainer'].includes(u.role)).map(u=>u.id);
+    return selR;
+  };
+
   const add = async (e) => {
     e.preventDefault();
-    const recipientIds = rMode==='all' ? [] : selR;
-    await col('news').add({...form, recipientIds, readBy:{}, authorId:profile.id, authorName:profile.name, createdAt:ts()});
+    const recipientIds = getModeIds(rMode);
+    const recipientLabel = rMode==='select' ? `${selR.length} Empfänger` : ROLE_LABELS[rMode]||'Alle';
+    await col('news').add({...form, recipientIds, recipientLabel, readBy:{}, authorId:profile.id, authorName:profile.name, createdAt:ts()});
     show('News veröffentlicht ✅');
     notifyAnnouncement(form.title, form.content).catch(()=>{});
     setForm({title:'',content:'',category:'Allgemein'});
@@ -4527,15 +4544,13 @@ function AdminPinnwand({profile, show}) {
             {/* Empfänger */}
             <div className="mb-3">
               <div className="text-xs font-medium text-gray-700 mb-1.5">Empfänger</div>
-              <div className="flex gap-2 mb-2">
-                <button type="button" onClick={()=>setRMode('all')}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rMode==='all'?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                  Alle Nutzer
-                </button>
-                <button type="button" onClick={()=>setRMode('select')}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rMode==='select'?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                  Auswählen ({selR.length})
-                </button>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {ROLE_BTNS.map(({v,l})=>(
+                  <button key={v} type="button" onClick={()=>setRMode(v)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rMode===v?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                    {v==='select'&&selR.length>0 ? `✏️ Einzeln (${selR.length})` : l}
+                  </button>
+                ))}
               </div>
               {rMode==='select' && (
                 <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
@@ -4572,9 +4587,9 @@ function AdminPinnwand({profile, show}) {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${CAT_COLORS[p.category]||CAT_COLORS['Allgemein']}`}>{p.category}</span>
-                    {p.recipientIds?.length>0 && (
+                    {(p.recipientIds?.length>0||p.recipientLabel) && (
                       <span className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full border border-purple-100">
-                        👥 {p.recipientIds.length} Empfänger
+                        👥 {p.recipientLabel||(p.recipientIds?.length+' Empfänger')}
                       </span>
                     )}
                   </div>
@@ -5202,12 +5217,29 @@ function VorstandNachrichten({profile}) {
     snap.forEach(d=>d.ref.update({read:true}));
   };
 
+  const ROLE_BTNS_R = [
+    {v:'all',      l:'👥 Alle'},
+    {v:'spieler',  l:'⚽ Spieler'},
+    {v:'trainer',  l:'🏅 Trainer'},
+    {v:'vorstand', l:'🏛 Vorstand'},
+    {v:'select',   l:'✏️ Einzeln'},
+  ];
+  const ROLE_LABELS_R = {all:'Alle',spieler:'Spieler',trainer:'Trainer',vorstand:'Vorstand'};
+  const getModeIdsR = (mode) => {
+    if(mode==='all')      return [];
+    if(mode==='spieler')  return allUsers.filter(u=>u.role==='player'||u.role==='dual').map(u=>u.id);
+    if(mode==='trainer')  return allUsers.filter(u=>['trainer','dual','vorstand_trainer'].includes(u.role)).map(u=>u.id);
+    if(mode==='vorstand') return allUsers.filter(u=>['vorstand','vorstand_trainer'].includes(u.role)).map(u=>u.id);
+    return selR;
+  };
+
   const sendRund = async (e) => {
     e.preventDefault(); if(!rundText.trim()) return;
-    const recipientIds = rMode==='all' ? [] : selR;
+    const recipientIds = getModeIdsR(rMode);
+    const recipientLabel = rMode==='select' ? `${selR.length} Empfänger` : ROLE_LABELS_R[rMode]||'Alle';
     await col('rundnachrichten').add({
       text:rundText.trim(), authorId:profile.id, authorName:profile.name,
-      recipientIds, readBy:{}, createdAt:ts()
+      recipientIds, recipientLabel, readBy:{}, createdAt:ts()
     });
     setRundText(''); setSelR([]); setRMode('all'); setRundOpen(false);
   };
@@ -5307,15 +5339,13 @@ function VorstandNachrichten({profile}) {
                 {/* Empfänger */}
                 <div className="mb-3">
                   <div className="text-xs font-medium text-gray-700 mb-1.5">Empfänger</div>
-                  <div className="flex gap-2 mb-2">
-                    <button type="button" onClick={()=>setRMode('all')}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rMode==='all'?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                      Alle Nutzer
-                    </button>
-                    <button type="button" onClick={()=>setRMode('select')}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rMode==='select'?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                      Auswählen ({selR.length})
-                    </button>
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {ROLE_BTNS_R.map(({v,l})=>(
+                      <button key={v} type="button" onClick={()=>setRMode(v)}
+                        className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rMode===v?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                        {v==='select'&&selR.length>0 ? `✏️ Einzeln (${selR.length})` : l}
+                      </button>
+                    ))}
                   </div>
                   {rMode==='select' && (
                     <div className="max-h-44 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
@@ -5352,7 +5382,7 @@ function VorstandNachrichten({profile}) {
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div>
                         <span className="text-[10px] text-purple-600 font-semibold bg-purple-50 px-2 py-0.5 rounded-full">
-                          📢 {r.recipientIds?.length ? `${r.recipientIds.length} Empfänger` : 'Alle'}
+                          📢 {r.recipientLabel||(r.recipientIds?.length ? `${r.recipientIds.length} Empfänger` : 'Alle')}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
