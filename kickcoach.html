@@ -1344,7 +1344,8 @@ function SessionDetail({session, drillMap, uebungenMap={}, players, att, onSetSt
 //  TRAINER — TAKTIKBOARD (HTML5 Canvas)
 // ═══════════════════════════════════════════════════════════════════
 function Taktikboard({profile, show}) {
-  const canvasRef  = useRef(null);
+  const canvasRef     = useRef(null);
+  const fieldCanvasRef= useRef(null);
   const [tool,      setTool]     = useState('draw');
   const [color,     setColor]    = useState('#ffffff');
   const [lineSize,  setLineSize] = useState(4);
@@ -1371,9 +1372,9 @@ function Taktikboard({profile, show}) {
   const FIELDS = [{v:'full',l:'Ganzes Feld'},{v:'half',l:'Hälfte'},{v:'third',l:'Drittel'},{v:'blank',l:'Leer'}];
 
   useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const parent=canvas.parentElement;
-    canvas.width=parent.clientWidth; canvas.height=parent.clientHeight;
+    const fc=fieldCanvasRef.current, dc=canvasRef.current; if(!fc||!dc) return;
+    const parent=dc.parentElement;
+    fc.width=dc.width=parent.clientWidth; fc.height=dc.height=parent.clientHeight;
     drawField(field);
   },[]);
 
@@ -1385,68 +1386,68 @@ function Taktikboard({profile, show}) {
   };
   const saveSnap=()=>{const c=canvasRef.current; setHistory(h=>[...h.slice(-24),c.toDataURL()]);};
   const drawField=(type)=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height, p=16;
-    // Grüner Rasen
-    const grad=ctx.createLinearGradient(0,0,0,H);
-    grad.addColorStop(0,'#2e7d32'); grad.addColorStop(0.5,'#388e3c'); grad.addColorStop(1,'#2e7d32');
-    ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
-    if(type==='blank') return;
+    const canvas=fieldCanvasRef.current; if(!canvas) return;
+    const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height, p=18;
+    // Dark outer border area
+    ctx.fillStyle='#1a5c1e'; ctx.fillRect(0,0,W,H);
+    const fw=W-p*2, fh=H-p*2;
+    if(type==='blank'){
+      ctx.fillStyle='#2e7d32'; ctx.fillRect(p,p,fw,fh); return;
+    }
+    // Alternating stripes
+    const nS=type==='full'?10:type==='half'?6:4, sw=fw/nS;
+    for(let i=0;i<nS;i++){
+      ctx.fillStyle=i%2===0?'#2e7d32':'#357a36';
+      ctx.fillRect(p+i*sw,p,sw,fh);
+    }
+    const lc='rgba(255,255,255,0.92)';
     ctx.save();
-    const lc='rgba(255,255,255,0.9)';
-    ctx.strokeStyle=lc; ctx.lineWidth=2; ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.strokeStyle=lc; ctx.lineWidth=2.5; ctx.lineCap='round'; ctx.lineJoin='round';
     if(type==='full'){
-      // Alternating stripes
-      for(let i=0;i<8;i++){
-        ctx.fillStyle=i%2===0?'rgba(0,0,0,0.04)':'rgba(255,255,255,0.04)';
-        ctx.fillRect(p+i*(W-p*2)/8,p,(W-p*2)/8,H-p*2);
-      }
-      const fw=W-p*2,fh=H-p*2;
-      ctx.strokeStyle=lc; ctx.lineWidth=2;
       ctx.strokeRect(p,p,fw,fh);
       // Mittellinie
       ctx.beginPath();ctx.moveTo(W/2,p);ctx.lineTo(W/2,p+fh);ctx.stroke();
       // Mittelkreis
-      ctx.beginPath();ctx.arc(W/2,H/2,fh*0.17,0,Math.PI*2);ctx.stroke();
+      ctx.beginPath();ctx.arc(W/2,H/2,fh*0.18,0,Math.PI*2);ctx.stroke();
       // Mittelpunkt
-      ctx.fillStyle=lc;ctx.beginPath();ctx.arc(W/2,H/2,3,0,Math.PI*2);ctx.fill();
-      // Strafräume
-      const bw=fw*0.2,bh=fh*0.38,gw=fw*0.08,gh=fh*0.19;
-      ctx.strokeRect(p,H/2-bh/2,bw,bh); ctx.strokeRect(W-p-bw,H/2-bh/2,bw,bh);
-      ctx.strokeRect(p,H/2-gh/2,gw,gh); ctx.strokeRect(W-p-gw,H/2-gh/2,gw,gh);
-      // Ecken-Bögen
-      [[p,p,0,Math.PI/2],[W-p,p,Math.PI/2,Math.PI],[W-p,H-p,Math.PI,3*Math.PI/2],[p,H-p,3*Math.PI/2,2*Math.PI]].forEach(([cx,cy,sa,ea])=>{
-        ctx.beginPath();ctx.arc(cx,cy,fh*0.04,sa,ea);ctx.stroke();
-      });
+      ctx.fillStyle=lc;ctx.beginPath();ctx.arc(W/2,H/2,3.5,0,Math.PI*2);ctx.fill();
+      // Strafräume & Torräume
+      const bw=fw*0.19,bh=fh*0.37,gw=fw*0.065,gh=fh*0.18;
+      ctx.strokeRect(p,H/2-bh/2,bw,bh);       ctx.strokeRect(W-p-bw,H/2-bh/2,bw,bh);
+      ctx.strokeRect(p,H/2-gh/2,gw,gh);       ctx.strokeRect(W-p-gw,H/2-gh/2,gw,gh);
+      // Tore (außerhalb des Feldes)
+      const goalH=fh*0.1,goalD=fw*0.022;
+      ctx.strokeRect(p-goalD,H/2-goalH/2,goalD,goalH);
+      ctx.strokeRect(W-p,H/2-goalH/2,goalD,goalH);
       // Strafstoß-Punkte
       ctx.fillStyle=lc;
-      ctx.beginPath();ctx.arc(p+bw*0.55,H/2,3,0,Math.PI*2);ctx.fill();
-      ctx.beginPath();ctx.arc(W-p-bw*0.55,H/2,3,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(p+bw*0.54,H/2,3.5,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(W-p-bw*0.54,H/2,3.5,0,Math.PI*2);ctx.fill();
+      // D-Bögen
+      const px1=p+bw*0.54, px2=W-p-bw*0.54, dr=fh*0.18;
+      const a=Math.acos(Math.min(1,(bw*0.46)/dr));
+      ctx.beginPath();ctx.arc(px1,H/2,dr,-a,a);ctx.stroke();
+      ctx.beginPath();ctx.arc(px2,H/2,dr,Math.PI-a,Math.PI+a);ctx.stroke();
+      // Ecken-Bögen
+      const cr=fh*0.038;
+      [[p,p,0,Math.PI/2],[W-p,p,Math.PI/2,Math.PI],[W-p,H-p,Math.PI,3*Math.PI/2],[p,H-p,3*Math.PI/2,2*Math.PI]]
+        .forEach(([cx,cy,sa,ea])=>{ctx.beginPath();ctx.arc(cx,cy,cr,sa,ea);ctx.stroke();});
     } else if(type==='half'){
-      for(let i=0;i<6;i++){
-        ctx.fillStyle=i%2===0?'rgba(0,0,0,0.04)':'rgba(255,255,255,0.04)';
-        ctx.fillRect(p+i*(W-p*2)/6,p,(W-p*2)/6,H-p*2);
-      }
-      const fw=W-p*2,fh=H-p*2;
-      ctx.strokeStyle=lc;ctx.lineWidth=2;
       ctx.strokeRect(p,p,fw,fh);
       const bw=fw*0.5,bh=fh*0.36,gw=fw*0.2,gh=fh*0.14;
-      ctx.strokeRect(p+(fw-bw)/2,p,bw,bh);
-      ctx.strokeRect(p+(fw-gw)/2,p,gw,gh);
+      ctx.strokeRect(p+(fw-bw)/2,p,bw,bh); ctx.strokeRect(p+(fw-gw)/2,p,gw,gh);
+      // D-Bogen
       ctx.beginPath();ctx.arc(W/2,p+bh,fh*0.2,Math.PI,2*Math.PI);ctx.stroke();
-      ctx.fillStyle=lc;ctx.beginPath();ctx.arc(W/2,p+fh*0.3,3,0,Math.PI*2);ctx.fill();
-      [[p,p,0,Math.PI/2],[W-p,p,Math.PI/2,Math.PI]].forEach(([cx,cy,sa,ea])=>{
-        ctx.beginPath();ctx.arc(cx,cy,fh*0.05,sa,ea);ctx.stroke();
-      });
+      // Strafstoß-Punkt
+      ctx.fillStyle=lc;ctx.beginPath();ctx.arc(W/2,p+fh*0.3,3.5,0,Math.PI*2);ctx.fill();
+      // Tor (außerhalb)
+      const goalW=fw*0.2*0.5,goalD=fh*0.04;
+      ctx.strokeRect(p+(fw-goalW)/2,p-goalD,goalW,goalD);
+      [[p,p,0,Math.PI/2],[W-p,p,Math.PI/2,Math.PI]]
+        .forEach(([cx,cy,sa,ea])=>{ctx.beginPath();ctx.arc(cx,cy,fh*0.05,sa,ea);ctx.stroke();});
     } else {
-      for(let i=0;i<4;i++){
-        ctx.fillStyle=i%2===0?'rgba(0,0,0,0.04)':'rgba(255,255,255,0.04)';
-        ctx.fillRect(p+i*(W-p*2)/4,p,(W-p*2)/4,H-p*2);
-      }
-      const fw=W-p*2,fh=H-p*2;
-      ctx.strokeStyle=lc;ctx.lineWidth=2;
       ctx.strokeRect(p,p,fw,fh);
-      [0.33,0.66].forEach(f=>{ctx.beginPath();ctx.moveTo(p,p+fh*f);ctx.lineTo(W-p,p+fh*f);ctx.stroke();});
+      [0.33,0.66].forEach(f=>{ctx.beginPath();ctx.moveTo(p,p+fh*f);ctx.lineTo(p+fw,p+fh*f);ctx.stroke();});
     }
     ctx.restore();
   };
@@ -1527,27 +1528,37 @@ function Taktikboard({profile, show}) {
   };
   const undo=()=>{
     if(!history.length) return;
-    const canvas=canvasRef.current,prev=history[history.length-1];
+    const canvas=canvasRef.current, ctx=canvas.getContext('2d'), prev=history[history.length-1];
     setHistory(h=>h.slice(0,-1));
-    const img=new Image();img.src=prev;img.onload=()=>canvas.getContext('2d').drawImage(img,0,0);
+    const img=new Image(); img.src=prev;
+    img.onload=()=>{ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0);};
   };
-  const clear=()=>{setHistory([]);drawField(field);};
-  const changeField=(v)=>{setField(v);saveSnap();drawField(v);};
+  const clear=()=>{
+    const dc=canvasRef.current; if(!dc) return;
+    setHistory([]); dc.getContext('2d').clearRect(0,0,dc.width,dc.height);
+  };
+  const changeField=(v)=>{setField(v); drawField(v);};
   const saveDrill=async()=>{
     if(!drillName.trim()){show('Bitte Übungsname eingeben','error');return;}
-    const img=canvasRef.current.toDataURL('image/png');
+    const fc=fieldCanvasRef.current, dc=canvasRef.current;
+    const tmp=document.createElement('canvas');
+    tmp.width=dc.width; tmp.height=dc.height;
+    const tctx=tmp.getContext('2d');
+    tctx.drawImage(fc,0,0); tctx.drawImage(dc,0,0);
+    const img=tmp.toDataURL('image/png');
     await col('drills').add({name:drillName,imageData:img,fieldType:field,teamId:profile.teamId,createdAt:ts()});
     show('Übung gespeichert ✅'); setDrillName(''); setBtnSaved(true); setTimeout(()=>setBtnSaved(false),2000);
   };
 
   const loadDrill=(drill)=>{
-    const canvas=canvasRef.current; if(!canvas) return;
-    const ctx=canvas.getContext('2d');
+    const fc=fieldCanvasRef.current, dc=canvasRef.current; if(!fc||!dc) return;
+    const fctx=fc.getContext('2d'), dctx=dc.getContext('2d');
     const img=new Image(); img.src=drill.imageData;
     img.onload=()=>{
-      saveSnap();
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      dctx.clearRect(0,0,dc.width,dc.height);
+      fctx.clearRect(0,0,fc.width,fc.height);
+      fctx.drawImage(img,0,0,fc.width,fc.height);
+      setHistory([]);
     };
     setField(drill.fieldType||'full');
     setDrillName(drill.name);
@@ -1642,9 +1653,11 @@ function Taktikboard({profile, show}) {
       )}
 
       {/* Canvas */}
-      <div className="flex-1 overflow-hidden relative" style={{background:'#2e7d32'}}>
+      <div className="flex-1 overflow-hidden relative" style={{background:'#1a5c1e'}}>
+        <canvas ref={fieldCanvasRef}
+          style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',display:'block'}}/>
         <canvas ref={canvasRef}
-          style={{width:'100%',height:'100%',cursor:tool==='text'?'text':'crosshair',display:'block',touchAction:'none'}}
+          style={{position:'absolute',top:0,left:0,width:'100%',height:'100%',cursor:tool==='text'?'text':'crosshair',display:'block',touchAction:'none'}}
           onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}
           onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}/>
         {/* Text-Eingabe Overlay */}
