@@ -2833,9 +2833,10 @@ function TrainerKasse({profile, show}) {
       {tab==='uebersicht' && (
         <div className="space-y-4">
           {/* Kassenstand */}
-          <div className="bg-gradient-to-br from-red-600 to-red-700 rounded-2xl p-5 text-white text-center shadow-lg">
+          <div className={`rounded-2xl p-5 text-white text-center shadow-lg ${kassenstand>=0?'bg-gradient-to-br from-green-600 to-green-700':'bg-gradient-to-br from-red-600 to-red-700'}`}>
             <div className="text-xs font-semibold uppercase tracking-wider opacity-80 mb-1">Kassenstand</div>
             <div className="text-4xl font-bold">{fmt(kassenstand)}</div>
+            <div className="text-xs opacity-70 mt-1">{kassenstand>=0?'✓ Positiver Saldo':'⚠ Negativer Saldo'}</div>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
@@ -3053,29 +3054,30 @@ function TrainerKasse({profile, show}) {
 //  MANNSCHAFTSKASSE — SPIELER
 // ═══════════════════════════════════════════════════════════════════
 function PlayerKasse({profile}) {
-  const [katalog,  setKatalog]  = useState([]);
-  const [strafen,  setStrafen]  = useState([]);
-  const [buch,     setBuch]     = useState([]);
+  const [katalog,    setKatalog]    = useState([]);
+  const [strafen,    setStrafen]    = useState([]);
+  const [allStrafen, setAllStrafen] = useState([]); // alle Team-Strafen für Kassenstand
+  const [buch,       setBuch]       = useState([]);
 
   useEffect(()=>{
     const u1 = col('fines').where('teamId','==',profile.teamId)
       .onSnapshot(s=>setKatalog(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))));
-    // Eigene Strafen — nur playerId filtern, kein Composite-Index nötig
     const u2 = col('playerFines').where('playerId','==',profile.id)
       .onSnapshot(s=>setStrafen(s.docs.map(d=>({id:d.id,...d.data()}))
         .filter(x=>x.teamId===profile.teamId)
         .sort((a,b)=>(b.assignedAt?.seconds||0)-(a.assignedAt?.seconds||0))));
-    // Kassenbuch für Kassenstand
-    const u3 = col('kassenbuch').where('teamId','==',profile.teamId)
+    // Alle bezahlten Team-Strafen für Gesamtkassenstand
+    const u3 = col('playerFines').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>setAllStrafen(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u4 = col('kassenbuch').where('teamId','==',profile.teamId)
       .onSnapshot(s=>setBuch(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return ()=>{u1();u2();u3();};
+    return ()=>{u1();u2();u3();u4();};
   },[]);
 
-  // Kassenstand (alle Team-Strafen nötig für Gesamtstand — aber wir zeigen nur Summe ohne alle Spieler-Strafen)
-  // Wir laden nur über kassenbuch + eigene bezahlte Strafen → für echten Gesamtstand brauchen wir einen snapshot
-  // Einfacher Ansatz: Kassenstand aus Kassenbuch ableiten (Trainer verwaltet den Stand)
+  const strafSum  = allStrafen.filter(s=>s.paid).reduce((s,x)=>s+Number(x.amount||0),0);
   const einnahmen = buch.filter(b=>b.type==='einnahme').reduce((s,x)=>s+Number(x.amount||0),0);
   const ausgaben  = buch.filter(b=>b.type==='ausgabe').reduce((s,x)=>s+Number(x.amount||0),0);
+  const kassenstand = strafSum + einnahmen - ausgaben;
 
   const fmt = (n) => Number(n).toFixed(2).replace('.',',') + ' €';
   const offen   = strafen.filter(s=>!s.paid);
@@ -3085,6 +3087,13 @@ function PlayerKasse({profile}) {
   return (
     <div className="p-4 space-y-4">
       <h1 className="text-lg font-semibold">💰 Mannschaftskasse</h1>
+
+      {/* Kassenstand */}
+      <div className={`rounded-2xl p-5 text-white text-center shadow-lg ${kassenstand>=0?'bg-gradient-to-br from-green-600 to-green-700':'bg-gradient-to-br from-red-600 to-red-700'}`}>
+        <div className="text-xs font-semibold uppercase tracking-wider opacity-80 mb-1">Aktueller Kassenstand</div>
+        <div className="text-4xl font-bold">{fmt(kassenstand)}</div>
+        <div className="text-xs opacity-70 mt-1">{kassenstand>=0?'✓ Positiver Saldo':'⚠ Negativer Saldo'}</div>
+      </div>
 
       {/* Meine offenen Strafen prominent */}
       {offen.length>0 && (
@@ -3228,10 +3237,10 @@ function TrainerApp({profile}) {
   const activeProfile = {...profile, teamId: activeTeamId};
 
   const nav = [
-    {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
+    {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'},{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
-    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'},{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
+    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
     {section:'Konto',   items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
 
@@ -3958,12 +3967,12 @@ function PlayerApp({profile}) {
   const nav = [{section:'', items:[
     {id:'training', icon:'📅',label:'Training'},
     {id:'spiele',   icon:'🏆',label:'Spieltage'},
+    {id:'kasse',    icon:'💰',label:'Kasse'},
     {id:'feedback', icon:'⭐',label:'Feedback'},
     {id:'wellness', icon:'💪',label:'Wellness'},
     {id:'stats',    icon:'📊',label:'Stats'},
     {id:'chat',     icon:'💬',label:'Chat'},
     {id:'news',     icon:'📢',label:'News'},
-    {id:'kasse',    icon:'💰',label:'Kasse'},
     {id:'profil',   icon:'👤',label:'Profil'},
   ]}];
 
@@ -4121,8 +4130,13 @@ function AdminTrainer({show}) {
 
   const teamMap = Object.fromEntries(teams.map(t=>[t.id,t.name]));
 
-  // All users (including players) for role-change list
-  const allSorted = [...allUsers].sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+  // All users sorted by team then name
+  const allSorted = [...allUsers].sort((a,b)=>{
+    const ta = teamMap[a.teamId||a.trainerTeamId||'']||'';
+    const tb = teamMap[b.teamId||b.trainerTeamId||'']||'';
+    return ta.localeCompare(tb)||(a.name||'').localeCompare(b.name||'');
+  });
+  const [expandedUsers, setExpandedUsers] = useState({});
 
   return (
     <div className="p-4">
@@ -4198,76 +4212,111 @@ function AdminTrainer({show}) {
         <Btn size="sm" variant="purple" onClick={()=>setOpen(true)}>+ Trainer</Btn>
       </div>
 
-      {/* Trainer section */}
+      {/* Trainer section — nach Team gruppiert, kollabiert */}
       <div className="mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Trainer / Vorstand</div>
       {trainers.length===0 ? (
         <div className="text-center text-gray-400 py-8 mb-4"><p className="text-sm">Noch keine Trainer.</p></div>
       ) : (
-        <div className="space-y-2 mb-6">
-          {trainers.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(t=>{
-            const tIds = t.trainerTeamIds?.length ? t.trainerTeamIds : (t.trainerTeamId ? [t.trainerTeamId] : []);
-            return (
-              <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-3">
-                <div className="flex items-start gap-3">
-                  <Avatar name={t.name} color={t.color} size="sm"/>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="text-sm font-semibold">{t.name}</div>
-                      <span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-semibold">
-                        {ROLES_ALL.find(r=>r.v===t.role)?.l||t.role}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-400 mb-1.5">{t.email}</div>
-                    {tIds.length>0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {tIds.map(id=>(
-                          <span key={id} className="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
-                            {teamMap[id]||id}
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-[11px] text-amber-500">Kein Team zugewiesen</span>
-                    )}
+        <div className="mb-6">
+          {(()=>{
+            const sorted = [...trainers].sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+            // Group by primary trainer team
+            const grouped = {};
+            sorted.forEach(t=>{
+              const tid = (t.trainerTeamIds?.[0])||t.trainerTeamId||'__none__';
+              const tname = teamMap[tid]||'Kein Team';
+              if(!grouped[tname]) grouped[tname]=[];
+              grouped[tname].push(t);
+            });
+            return Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).map(([tname,members])=>(
+              <div key={tname} className="mb-3">
+                <button onClick={()=>setExpandedUsers(e=>({...e,['t_'+tname]:!e['t_'+tname]}))}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-purple-50 hover:bg-purple-100 rounded-xl mb-1 transition-colors">
+                  <span className="text-xs font-semibold text-purple-700">{tname} ({members.length})</span>
+                  <span className="text-purple-400 text-xs">{expandedUsers['t_'+tname]?'▲':'▼'}</span>
+                </button>
+                {expandedUsers['t_'+tname] && (
+                  <div className="space-y-2">
+                    {members.map(t=>{
+                      const tIds = t.trainerTeamIds?.length ? t.trainerTeamIds : (t.trainerTeamId ? [t.trainerTeamId] : []);
+                      return (
+                        <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-3">
+                          <div className="flex items-start gap-3">
+                            <Avatar name={t.name} color={t.color} size="sm"/>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div className="text-sm font-semibold">{t.name}</div>
+                                <span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-semibold">
+                                  {ROLES_ALL.find(r=>r.v===t.role)?.l||t.role}
+                                </span>
+                              </div>
+                              <div className="text-xs text-gray-400 mb-1.5">{t.email}</div>
+                              {tIds.length>0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {tIds.map(id=>(
+                                    <span key={id} className="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
+                                      {teamMap[id]||id}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : <span className="text-[11px] text-amber-500">Kein Team zugewiesen</span>}
+                            </div>
+                            <div className="flex flex-col gap-1 flex-shrink-0">
+                              <button onClick={()=>setEditTeams(t)} className="text-xs px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors whitespace-nowrap">🏟️ Teams</button>
+                              <button onClick={()=>{setEditRole(t);setSelRole(t.role);}} className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap">🔄 Rolle</button>
+                              <button onClick={()=>setDelTrainer({id:t.id,name:t.name})} className="text-xs px-2 py-1 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors whitespace-nowrap">🗑 Löschen</button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="flex flex-col gap-1 flex-shrink-0">
-                    <button onClick={()=>setEditTeams(t)}
-                      className="text-xs px-2 py-1 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors whitespace-nowrap">
-                      🏟️ Teams
-                    </button>
-                    <button onClick={()=>{setEditRole(t);setSelRole(t.role);}}
-                      className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap">
-                      🔄 Rolle
-                    </button>
-                    <button onClick={()=>setDelTrainer({id:t.id,name:t.name})}
-                      className="text-xs px-2 py-1 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 transition-colors whitespace-nowrap">
-                      🗑 Löschen
-                    </button>
-                  </div>
-                </div>
+                )}
               </div>
-            );
-          })}
+            ));
+          })()}
         </div>
       )}
 
-      {/* All users — role change */}
+      {/* All users — role change, sorted by team, collapsed */}
       <div className="mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Alle Nutzer — Rolle ändern</div>
-      <div className="space-y-1.5">
-        {allSorted.filter(u=>!['trainer','dual','vorstand','vorstand_trainer'].includes(u.role)).map(u=>(
-          <div key={u.id} className="bg-white border border-gray-200 rounded-xl px-3 py-2 flex items-center gap-3">
-            <Avatar name={u.name} color={u.color} size="sm"/>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium truncate">{u.name}</div>
-              <div className="text-xs text-gray-400">{ROLES_ALL.find(r=>r.v===u.role)?.l||u.role}</div>
-            </div>
-            <button onClick={()=>{setEditRole(u);setSelRole(u.role);}}
-              className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0">
-              🔄 Rolle
+      {(()=>{
+        const players = allSorted.filter(u=>!['trainer','dual','vorstand','vorstand_trainer'].includes(u.role));
+        // Group by team
+        const grouped = {};
+        players.forEach(u=>{
+          const tid = u.teamId||u.trainerTeamId||'__none__';
+          const tname = teamMap[tid]||'Kein Team';
+          if(!grouped[tname]) grouped[tname]=[];
+          grouped[tname].push(u);
+        });
+        return Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b)).map(([tname,users])=>(
+          <div key={tname} className="mb-3">
+            <button onClick={()=>setExpandedUsers(e=>({...e,[tname]:!e[tname]}))}
+              className="w-full flex items-center justify-between px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl mb-1 transition-colors">
+              <span className="text-xs font-semibold text-gray-600">{tname} ({users.length})</span>
+              <span className="text-gray-400 text-xs">{expandedUsers[tname]?'▲':'▼'}</span>
             </button>
+            {expandedUsers[tname] && (
+              <div className="space-y-1.5">
+                {users.map(u=>(
+                  <div key={u.id} className="bg-white border border-gray-200 rounded-xl px-3 py-2 flex items-center gap-3">
+                    <Avatar name={u.name} color={u.color} size="sm"/>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{u.name}</div>
+                      <div className="text-xs text-gray-400">{ROLES_ALL.find(r=>r.v===u.role)?.l||u.role}</div>
+                    </div>
+                    <button onClick={()=>{setEditRole(u);setSelRole(u.role);}}
+                      className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex-shrink-0">
+                      🔄 Rolle
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        ));
+      })()}
     </div>
   );
 }
@@ -5905,8 +5954,23 @@ function AdminPlayerDetail({player, onClose, show}) {
       <div className="space-y-5">
         {/* Steckbrief */}
         <div className="flex items-center gap-4 bg-gray-50 rounded-xl p-4">
-          <div className="w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold flex-shrink-0" style={{background:player.color||'#CC0000'}}>
-            {player.number||initials(player.name)}
+          {/* Avatar + Profilbild-Upload */}
+          <div className="relative flex-shrink-0 group">
+            {player.photoUrl
+              ? <img src={player.photoUrl} className="w-14 h-14 rounded-full object-cover" alt={player.name}/>
+              : <div className="w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold" style={{background:player.color||'#CC0000'}}>{player.number||initials(player.name)}</div>
+            }
+            <label className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-all cursor-pointer">
+              <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-semibold">📷</span>
+              <input type="file" accept="image/*" className="hidden" onChange={async e=>{
+                const file=e.target.files[0]; if(!file) return;
+                if(file.size>700*1024){show('Bild zu groß (max. 700 KB)','error');e.target.value='';return;}
+                const data=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});
+                await col('users').doc(player.id).update({photoUrl:data});
+                show('Profilbild gespeichert ✅');
+                e.target.value='';
+              }}/>
+            </label>
           </div>
           <div>
             <div className="font-semibold text-base">{player.name}</div>
@@ -5919,6 +5983,7 @@ function AdminPlayerDetail({player, onClose, show}) {
                 ? <span className="text-green-600">✓ Konto verknüpft · {player.email}</span>
                 : <span className="text-amber-600">⏳ Noch nicht registriert</span>}
             </div>
+            <div className="text-[10px] text-gray-400 mt-0.5">📷 Auf Foto hovern zum Ändern</div>
           </div>
         </div>
 
@@ -7426,20 +7491,19 @@ function DualApp({profile}) {
   const playerProfile  = {...profile, teamId: profile.teamId};
 
   const trainerNav = [
-    {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'}]},
+    {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'},{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
-    {section:'Finanzen', items:[{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Konto',    items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
   const playerNav = [{section:'', items:[
     {id:'training', icon:'📅',label:'Training'},
+    {id:'kasse',    icon:'💰',label:'Kasse'},
     {id:'feedback', icon:'⭐',label:'Feedback'},
     {id:'wellness', icon:'💪',label:'Wellness'},
     {id:'stats',    icon:'📊',label:'Stats'},
     {id:'chat',     icon:'💬',label:'Chat'},
     {id:'news',     icon:'📢',label:'News'},
-    {id:'kasse',    icon:'💰',label:'Kasse'},
     {id:'profil',   icon:'👤',label:'Profil'},
   ]}];
 
