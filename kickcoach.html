@@ -171,9 +171,18 @@ const Btn = ({variant='primary', size='md', className='', children, ...p}) => {
   const s = size==='sm' ? 'px-3 py-1.5 text-xs' : size==='lg' ? 'px-5 py-2.5 text-base' : 'px-4 py-2 text-sm';
   return <button className={`${v[variant]||v.primary} ${s} rounded-lg font-medium transition-colors disabled:opacity-40 ${className}`} {...p}>{children}</button>;
 };
-const Avatar = ({name, color='#CC0000', size='md'}) => {
-  const s = size==='sm'?'w-7 h-7 text-xs':size==='lg'?'w-12 h-12 text-lg':'w-9 h-9 text-sm';
-  return <div className={`${s} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0`} style={{background:color}}>{initials(name)}</div>;
+const Avatar = ({name, color='#CC0000', size='md', photo=null, number=null}) => {
+  const s = {
+    xs:  'w-6 h-6 text-[9px]',
+    sm:  'w-7 h-7 text-xs',
+    md8: 'w-8 h-8 text-xs',
+    md:  'w-9 h-9 text-sm',
+    md10:'w-10 h-10 text-sm',
+    lg:  'w-12 h-12 text-lg',
+    xl:  'w-14 h-14 text-xl',
+  }[size]||'w-9 h-9 text-sm';
+  if(photo) return <img src={photo} className={`${s} rounded-full object-cover flex-shrink-0`} alt={name}/>;
+  return <div className={`${s} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0`} style={{background:color||'#CC0000'}}>{number||initials(name)}</div>;
 };
 
 // ─── Toast ──────────────────────────────────────────────────────────
@@ -487,9 +496,10 @@ function Layout({profile, nav, page, setPage, onLogout, accent='red', extraHeade
     <aside className="w-52 bg-gray-950 flex flex-col h-full" style={{background:'#111'}}>
       {/* Logo / Branding */}
       <div className="px-4 py-4 border-b border-white/10 flex items-center gap-2.5 flex-shrink-0">
-        <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
-          {initials(profile.name)}
-        </div>
+        {profile.photoUrl
+          ? <img src={profile.photoUrl} className="w-8 h-8 rounded-full object-cover flex-shrink-0" alt={profile.name}/>
+          : <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{initials(profile.name)}</div>
+        }
         <div className="min-w-0">
           <div className="text-xs font-semibold text-white truncate">{profile.name}</div>
           <div className="text-[10px] text-white/40">{{vorstand:'Vorstand',trainer:'Trainer',player:'Spieler',dual:'Trainer & Spieler'}[profile.role]||profile.role}</div>
@@ -591,9 +601,7 @@ function TrainerPlayerDetail({player, onClose, show}) {
       <div className="space-y-4">
         {/* Steckbrief */}
         <div className="flex items-center gap-3 bg-gray-50 rounded-xl p-3">
-          <div className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0" style={{background:player.color||'#CC0000'}}>
-            {player.number||initials(player.name)}
-          </div>
+          <Avatar name={player.name} color={player.color} size="lg" photo={player.photoUrl} number={player.number}/>
           <div>
             <div className="font-semibold">{player.name}</div>
             <div className="text-xs text-gray-500">
@@ -760,9 +768,7 @@ function TrainerKader({profile, show}) {
             return (
               <div key={p.id} onClick={()=>setDetail(p)}
                 className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:border-red-200 hover:bg-red-50/30 transition-colors">
-                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                  {p.number||initials(p.name)}
-                </div>
+                <Avatar name={p.name} color={p.color} size="md8" photo={p.photoUrl} number={p.number}/>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium truncate">{p.name}</div>
                   <div className="flex flex-wrap gap-1 mt-0.5">
@@ -1137,9 +1143,7 @@ function SessionDetail({session, drillMap, uebungenMap={}, players, att, onSetSt
                   const cur = att.byPlayer?.[p.id]||null;
                   return (
                     <div key={p.id} className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                        {p.number||initials(p.name)}
-                      </div>
+                      <Avatar name={p.name} color={p.color} size="sm" photo={p.photoUrl} number={p.number}/>
                       <div className="flex-1 min-w-0"><div className="text-xs font-medium truncate">{p.name}</div></div>
                       <div className="flex gap-1">
                         {STATUS_OPTS.map(opt=>(
@@ -2066,9 +2070,7 @@ function TrainerSpiele({profile, show}) {
                         const cur = r?.status||null;
                         return (
                           <div key={p.id} className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                              {p.number||initials(p.name)}
-                            </div>
+                            <Avatar name={p.name} color={p.color} size="sm" photo={p.photoUrl} number={p.number}/>
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-medium truncate">{p.name}</div>
                               {r?.mitfahrt===true && <span className="text-[9px] text-orange-600">🚗 Mitfahrt</span>}
@@ -2108,9 +2110,7 @@ function TrainerSpiele({profile, show}) {
                         const r = gameRatings.find(x=>x.playerId===p.id);
                         return (
                           <div key={p.id} className="bg-gray-50 rounded-xl px-3 py-2.5 flex items-center gap-3">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                              {p.number||initials(p.name)}
-                            </div>
+                            <Avatar name={p.name} color={p.color} size="sm" photo={p.photoUrl} number={p.number}/>
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-semibold truncate">{p.name}</div>
                               {r ? (
@@ -2418,9 +2418,7 @@ function TrainerSpielerStatistik({profile}) {
       <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={()=>setSelected(null)}>
         <div className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl" onClick={e=>e.stopPropagation()}>
           <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-              {p.number||initials(p.name)}
-            </div>
+            <Avatar name={p.name} color={p.color} size="md10" photo={p.photoUrl} number={p.number}/>
             <div className="flex-1">
               <div className="font-bold">{p.name}</div>
               <div className="text-xs text-gray-400">{p.position||'Spieler'}</div>
@@ -2503,9 +2501,7 @@ function TrainerSpielerStatistik({profile}) {
             return (
               <button key={p.id} onClick={()=>setSelected(p)}
                 className="w-full bg-white border border-gray-200 rounded-xl p-3 flex items-center gap-3 text-left hover:border-red-300 transition-colors">
-                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                  {p.number||initials(p.name)}
-                </div>
+                <Avatar name={p.name} color={p.color} size="md8" photo={p.photoUrl} number={p.number}/>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold truncate">{p.name}</div>
                   <div className="text-[10px] text-gray-400">{p.position||''}</div>
@@ -2601,7 +2597,7 @@ function TrainerBeurteilungen({profile, show}) {
               <div key={player.id} className="bg-white border border-gray-200 rounded-xl p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
-                    <Avatar name={player.name} color={player.color} size="sm"/>
+                    <Avatar name={player.name} color={player.color} size="sm" photo={player.photoUrl} number={player.number}/>
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">{player.name}</div>
                       <div className="text-xs text-gray-400">{r?`${r.date} · Ø ${r.avg}/5`:'Noch keine Beurteilung'}</div>
@@ -4301,7 +4297,7 @@ function AdminTrainer({show}) {
               <div className="space-y-1.5">
                 {users.map(u=>(
                   <div key={u.id} className="bg-white border border-gray-200 rounded-xl px-3 py-2 flex items-center gap-3">
-                    <Avatar name={u.name} color={u.color} size="sm"/>
+                    <Avatar name={u.name} color={u.color} size="sm" photo={u.photoUrl}/>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{u.name}</div>
                       <div className="text-xs text-gray-400">{ROLES_ALL.find(r=>r.v===u.role)?.l||u.role}</div>
@@ -5040,7 +5036,7 @@ function VorstandNachrichten({profile}) {
             <button key={t.id} onClick={()=>openThread(t)}
               className="w-full flex items-center gap-3 bg-white border border-gray-200 hover:border-purple-300 rounded-xl p-3.5 text-left transition-all">
               <div className="relative flex-shrink-0">
-                <Avatar name={t.name} color={t.color} size="sm"/>
+                <Avatar name={t.name} color={t.color} size="sm" photo={t.photoUrl}/>
                 {unread[t.id]>0 && <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-white text-[9px] font-bold flex items-center justify-center">{unread[t.id]}</div>}
               </div>
               <div className="min-w-0">
@@ -5059,7 +5055,7 @@ function VorstandNachrichten({profile}) {
     <div className="flex flex-col" style={{height:'calc(100vh - 56px)'}}>
       <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-shrink-0 bg-white">
         <button onClick={()=>setSel(null)} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
-        <Avatar name={sel.name} color={sel.color} size="sm"/>
+        <Avatar name={sel.name} color={sel.color} size="sm" photo={sel.photoUrl}/>
         <div><div className="text-sm font-semibold">{sel.name}</div><div className="text-xs text-gray-400">Trainer</div></div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -5142,7 +5138,7 @@ function TrainerNachrichtAnVorstand({profile}) {
           {vorstand.map(v=>(
             <button key={v.id} onClick={()=>openThread(v)}
               className="w-full flex items-center gap-3 bg-white border border-gray-200 hover:border-red-300 rounded-xl p-3.5 text-left transition-all">
-              <Avatar name={v.name} color={v.color||'#7c3aed'} size="sm"/>
+              <Avatar name={v.name} color={v.color||'#7c3aed'} size="sm" photo={v.photoUrl}/>
               <div><div className="text-sm font-semibold">{v.name}</div><div className="text-xs text-gray-400">Vorstand</div></div>
               <span className="ml-auto text-gray-300">›</span>
             </button>
@@ -5156,7 +5152,7 @@ function TrainerNachrichtAnVorstand({profile}) {
     <div className="flex flex-col" style={{height:'calc(100vh - 56px)'}}>
       <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-shrink-0 bg-white">
         <button onClick={()=>setSel(null)} className="text-gray-400 hover:text-gray-700 text-lg">←</button>
-        <Avatar name={sel.name} color={sel.color||'#7c3aed'} size="sm"/>
+        <Avatar name={sel.name} color={sel.color||'#7c3aed'} size="sm" photo={sel.photoUrl}/>
         <div><div className="text-sm font-semibold">{sel.name}</div><div className="text-xs text-gray-400">Vorstand</div></div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -5406,7 +5402,7 @@ function AdminTeamverwaltung({show}) {
                         const field = m.trainerTeamId===team.id?'trainerTeamId':'teamId';
                         return (
                           <div key={m.id+field} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:m.color||'#CC0000'}}>{initials(m.name)}</div>
+                            <Avatar name={m.name} color={m.color} size="sm" photo={m.photoUrl}/>
                             <div className="flex-1 min-w-0">
                               <div className="text-sm font-medium truncate">{m.name}</div>
                               <div className="text-[10px] text-gray-400">{ROLE_LABEL[m.role]||m.role}</div>
@@ -5430,9 +5426,7 @@ function AdminTeamverwaltung({show}) {
                         const age = fmtAge(m.dob);
                         return (
                           <div key={m.id} className="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">
-                            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0" style={{background:m.color||'#CC0000'}}>
-                              {m.number||initials(m.name)}
-                            </div>
+                            <Avatar name={m.name} color={m.color} size="sm" photo={m.photoUrl} number={m.number}/>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-baseline gap-2">
                                 <div className="text-sm font-medium truncate">{m.name}</div>
@@ -5867,9 +5861,7 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
           {players.map(p=>(
             <div key={p.id} onClick={()=>setDetail(p)}
               className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:border-red-200 hover:bg-red-50/30 transition-colors">
-              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:p.color||'#CC0000'}}>
-                {p.number||initials(p.name)}
-              </div>
+              <Avatar name={p.name} color={p.color} size="md8" photo={p.photoUrl} number={p.number}/>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium truncate">{p.name}</div>
                 <div className="text-xs text-gray-400 truncate">
@@ -7769,10 +7761,7 @@ function CompleteProfile({user, onDone}) {
               <button key={s.id} onClick={()=>savePlayer(s)}
                 className="w-full flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all"
                 style={{border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.04)'}}>
-                <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                  style={{background:s.color||'#CC0000'}}>
-                  {s.number||initials(s.name)}
-                </div>
+                <Avatar name={s.name} color={s.color} size="md" photo={s.photoUrl} number={s.number}/>
                 <div>
                   <div className="text-sm font-semibold text-white">{s.name}</div>
                   <div className="text-xs" style={{color:'rgba(255,255,255,0.4)'}}>{s.position||'—'}</div>
@@ -7858,10 +7847,7 @@ function CompleteProfile({user, onDone}) {
                 <button key={s.id} onClick={()=>saveTrainer(s)} disabled={saving}
                   className="w-full flex items-center gap-3 rounded-xl px-4 py-3 text-left transition-all disabled:opacity-50"
                   style={{border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.04)'}}>
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                    style={{background:s.color||'#CC0000'}}>
-                    {initials(s.name)}
-                  </div>
+                  <Avatar name={s.name} color={s.color} size="md" photo={s.photoUrl}/>
                   <div className="text-sm font-semibold text-white">{s.name}</div>
                 </button>
               ))}
@@ -7988,9 +7974,7 @@ function ClaimPlayer({authUser, profile, onClaimed}) {
                   {slots.map(s=>(
                     <button key={s.id} onClick={()=>claim(s)} disabled={saving}
                       className="w-full flex items-center gap-3 border border-gray-200 hover:border-red-500 hover:bg-red-50 rounded-xl px-4 py-3 text-left transition-all disabled:opacity-50">
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" style={{background:s.color||'#CC0000'}}>
-                        {s.number||initials(s.name)}
-                      </div>
+                      <Avatar name={s.name} color={s.color} size="md" photo={s.photoUrl} number={s.number}/>
                       <div><div className="text-sm font-semibold">{s.name}</div>
                         <div className="text-xs text-gray-400">{s.position||'—'}</div>
                       </div>
@@ -8076,9 +8060,7 @@ function AdminGenehmigungen({show}) {
           {pending.map(u=>(
             <div key={u.id} className="bg-white border border-amber-200 rounded-xl p-4 shadow-sm">
               <div className="flex items-start gap-3 mb-3">
-                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style={{background:u.color||'#CC0000'}}>
-                  {initials(u.name)}
-                </div>
+                <Avatar name={u.name} color={u.color} size="md10" photo={u.photoUrl}/>
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-sm">{u.name}</div>
                   <div className="text-xs text-gray-400">{u.email}</div>
