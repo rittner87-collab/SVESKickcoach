@@ -3254,6 +3254,9 @@ function PlayerKasse({profile}) {
 function TrainerBenachrichtigungen({profile}) {
   const [notifs, setNotifs] = useState([]);
   const [runds,  setRunds]  = useState([]); // Rundnachrichten vom Vorstand
+  const [posts,  setPosts]  = useState([]); // Pinnwand-Einträge
+
+  const CAT_COLORS = {'Allgemein':'bg-gray-100 text-gray-600','Ankündigung':'bg-blue-100 text-blue-700','Wichtig':'bg-red-100 text-red-600','Veranstaltung':'bg-red-100 text-red-700'};
 
   useEffect(()=>{
     const u1 = col('benachrichtigungen')
@@ -3266,13 +3269,22 @@ function TrainerBenachrichtigungen({profile}) {
         .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
       const visible = all.filter(r=>!r.recipientIds?.length||r.recipientIds.includes(profile.id));
       setRunds(visible);
-      // Auto-als-gelesen markieren
       visible.forEach(r=>{
         if(r.readBy&&r.readBy[profile.id]) return;
         col('rundnachrichten').doc(r.id).update({[`readBy.${profile.id}`]:true}).catch(()=>{});
       });
     });
-    return ()=>{u1();u2();};
+    const u3 = col('news').onSnapshot(s=>{
+      const all = s.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      const visible = all.filter(p=>!p.recipientIds?.length||p.recipientIds.includes(profile.id));
+      setPosts(visible);
+      visible.forEach(p=>{
+        if(p.readBy&&p.readBy[profile.id]) return;
+        col('news').doc(p.id).update({[`readBy.${profile.id}`]:true}).catch(()=>{});
+      });
+    });
+    return ()=>{u1();u2();u3();};
   },[]);
 
   const markRead = async (n) => {
@@ -3283,12 +3295,35 @@ function TrainerBenachrichtigungen({profile}) {
   };
 
   const unread = notifs.filter(n=>!(n.gelesenVon||[]).includes(profile.uid));
-  const totalUnread = unread.length; // runds are auto-marked read
+  const totalUnread = unread.length;
 
   return (
     <div className="p-4">
       <h1 className="text-lg font-semibold mb-1">Benachrichtigungen</h1>
       <p className="text-xs text-gray-400 mb-4">{totalUnread} ungelesen</p>
+
+      {/* Pinnwand-Einträge vom Vorstand */}
+      {posts.length>0 && (
+        <div className="mb-4">
+          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">📌 Pinnwand</div>
+          <div className="space-y-2">
+            {posts.map(p=>(
+              <div key={p.id} className="bg-white border border-gray-200 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${CAT_COLORS[p.category]||CAT_COLORS['Allgemein']}`}>{p.category}</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400">{fmtAgo(p.createdAt)}</span>
+                </div>
+                <div className="text-sm font-semibold text-gray-900">{p.title}</div>
+                <p className="text-sm text-gray-600 mt-0.5 leading-relaxed">{p.content}</p>
+                <div className="text-[10px] text-gray-400 mt-1">— {p.authorName}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Rundnachrichten vom Vorstand */}
       {runds.length>0 && (
         <div className="mb-4">
@@ -3308,7 +3343,7 @@ function TrainerBenachrichtigungen({profile}) {
         </div>
       )}
       {/* Aufgaben-Benachrichtigungen */}
-      {notifs.length===0 && runds.length===0 ? (
+      {notifs.length===0 && runds.length===0 && posts.length===0 ? (
         <div className="text-center text-gray-400 py-12 text-sm">Keine Benachrichtigungen.</div>
       ) : notifs.length>0 && (
         <div>
@@ -4669,9 +4704,9 @@ function AdminPinnwand({profile, show}) {
             const unreadList = recipients.filter(u=>!readBy[u.id]);
             const isExp = expanded[p.id];
             return (
-              <div key={p.id} className="bg-white border border-gray-200 rounded-2xl p-4 group">
+              <div key={p.id} className="bg-white border border-gray-200 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${CAT_COLORS[p.category]||CAT_COLORS['Allgemein']}`}>{p.category}</span>
                     {(p.recipientIds?.length>0||p.recipientLabel) && (
                       <span className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full border border-purple-100">
@@ -4679,9 +4714,12 @@ function AdminPinnwand({profile, show}) {
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="text-xs text-gray-400">{fmtAgo(p.createdAt)}</span>
-                    <button onClick={()=>del(p.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-all">✕</button>
+                    <button onClick={()=>del(p.id)} title="Eintrag löschen"
+                      className="w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors text-sm">
+                      🗑
+                    </button>
                   </div>
                 </div>
                 <h3 className="text-sm font-semibold">{p.title}</h3>
