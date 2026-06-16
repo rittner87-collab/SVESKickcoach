@@ -3393,7 +3393,7 @@ function TrainerApp({profile}) {
     {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'},{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
     {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
-    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
+    {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'containerplanung',icon:'📦',label:'Containerplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'benachrichtigungen',icon:'🔔',label:'Benachrichtigungen'}]},
     {section:'Konto',   items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
 
@@ -3428,9 +3428,10 @@ function TrainerApp({profile}) {
     beurteilungen: <><TeamSwitcher/><TrainerBeurteilungen key={activeTeamId} profile={activeProfile} show={show}/></>,
     chat:          <><TeamSwitcher/><ChatPage             key={activeTeamId} profile={activeProfile} accent="red"/></>,
     busplanung:         <TrainerBusplanung profile={activeProfile} show={show}/>,
+    containerplanung:   <TrainerContainerplanung profile={activeProfile} show={show}/>,
     kalender:           <Vereinskalender profile={profile} canEdit={false}/>,
     platz:              <TrainerPlatzverwaltung profile={activeProfile} show={show}/>,
-    dokumente:          <TrainerDokumente/>,
+    dokumente:          <TrainerDokumente profile={profile}/>,
     vorstand:           <TrainerNachrichtAnVorstand profile={profile}/>,
     benachrichtigungen: <TrainerBenachrichtigungen profile={profile}/>,
     spielerstats:       <TrainerSpielerStatistik profile={activeProfile}/>,
@@ -5060,11 +5061,31 @@ function AdminDokumente({profile, show}) {
   const [uploading,setUploading]= useState(false);
   const [uploadErr,setUploadErr]= useState('');
   const [viewer,   setViewer]   = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [rMode,    setRMode]    = useState('all');
+  const [selR,     setSelR]     = useState([]);
   const fileRef = useRef(null);
   const CATS = ['Allgemein','Training','Verwaltung','Satzung','Finanzen','Sonstiges'];
+  const DOK_ROLE_BTNS = [
+    {v:'all',      l:'👥 Alle'},
+    {v:'spieler',  l:'⚽ Spieler'},
+    {v:'trainer',  l:'🏅 Trainer'},
+    {v:'vorstand', l:'🏛 Vorstand'},
+    {v:'select',   l:'✏️ Einzeln'},
+  ];
+  const DOK_ROLE_LABELS = {all:'Alle',spieler:'Spieler',trainer:'Trainer',vorstand:'Vorstand'};
+  const getModeIds = (mode) => {
+    if(mode==='all')      return [];
+    if(mode==='spieler')  return allUsers.filter(u=>u.role==='player'||u.role==='dual').map(u=>u.id);
+    if(mode==='trainer')  return allUsers.filter(u=>['trainer','dual','vorstand_trainer'].includes(u.role)).map(u=>u.id);
+    if(mode==='vorstand') return allUsers.filter(u=>['vorstand','vorstand_trainer'].includes(u.role)).map(u=>u.id);
+    return selR;
+  };
+  const toggleUser = (uid) => setSelR(prev=>prev.includes(uid)?prev.filter(x=>x!==uid):[...prev,uid]);
 
   // Allgemeine Vereinsdokumente laden (ohne Spieler-Docs, die haben playerId gesetzt)
   useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.playerId))); },[]);
+  useEffect(()=>{ col('users').get().then(s=>setAllUsers(s.docs.map(d=>({id:d.id,...d.data()})))); },[]);
 
   const upload = async (e) => {
     e.preventDefault();
@@ -5078,6 +5099,8 @@ function AdminDokumente({profile, show}) {
         r.onerror = rej;
         r.readAsDataURL(file);
       });
+      const recipientIds = getModeIds(rMode);
+      const recipientLabel = rMode==='select' ? `${selR.length} Empfänger` : DOK_ROLE_LABELS[rMode]||'Alle';
       await col('dokumente').add({
         name: form.name || file.name,
         category: form.category,
@@ -5087,10 +5110,11 @@ function AdminDokumente({profile, show}) {
         fileType: file.type,
         fileSize: file.size,
         uploadedBy: profile.name,
+        recipientIds, recipientLabel,
         createdAt: ts()
       });
       show('Dokument hochgeladen ✅');
-      setForm({name:'',category:'Allgemein',notes:''}); setFile(null); setOpen(false);
+      setForm({name:'',category:'Allgemein',notes:''}); setFile(null); setSelR([]); setRMode('all'); setOpen(false);
     } catch(err) { setUploadErr(err.message); }
     setUploading(false);
   };
@@ -5137,6 +5161,30 @@ function AdminDokumente({profile, show}) {
             <Inp label="Anzeigename (optional)" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Automatisch aus Dateiname"/>
             <Sel label="Kategorie" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{CATS.map(c=><option key={c}>{c}</option>)}</Sel>
             <Txt label="Notiz (optional)" rows={2} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+            {/* Empfänger */}
+            <div className="mb-3">
+              <div className="text-xs font-medium text-gray-700 mb-1.5">Empfänger</div>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {DOK_ROLE_BTNS.map(({v,l})=>(
+                  <button key={v} type="button" onClick={()=>setRMode(v)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${rMode===v?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                    {v==='select'&&selR.length>0 ? `✏️ Einzeln (${selR.length})` : l}
+                  </button>
+                ))}
+              </div>
+              {rMode==='select' && (
+                <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-xl divide-y divide-gray-100">
+                  {allUsers.sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(u=>(
+                    <label key={u.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50">
+                      <input type="checkbox" checked={selR.includes(u.id)} onChange={()=>toggleUser(u.id)} className="accent-purple-600"/>
+                      <Avatar name={u.name} color={u.color} size="xs" photo={u.photoUrl}/>
+                      <span className="text-xs flex-1">{u.name}</span>
+                      <span className="text-[10px] text-gray-400">{u.role}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
             <p className="text-[11px] text-gray-400 mb-2">Maximale Dateigröße: 700 KB</p>
             {uploadErr && <div className="mb-2 text-xs text-red-600 bg-red-50 p-2 rounded-lg">{uploadErr}</div>}
             <div className="flex gap-2">
@@ -5185,7 +5233,10 @@ function AdminDokumente({profile, show}) {
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate">{doc.name||doc.fileName}</div>
                       <div className="text-xs text-gray-400">{doc.fileName} · {fmtSize(doc.fileSize)} · {doc.uploadedBy}</div>
-                      {doc.notes&&<div className="text-xs text-gray-500 mt-0.5 italic">{doc.notes}</div>}
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        {doc.notes&&<span className="text-xs text-gray-500 italic">{doc.notes}</span>}
+                        {doc.recipientLabel && <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">👥 {doc.recipientLabel}</span>}
+                      </div>
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
                       <button onClick={()=>setViewer(doc)} className="w-8 h-8 bg-purple-50 hover:bg-purple-100 rounded-lg flex items-center justify-center text-purple-600 transition-colors text-sm">👁</button>
@@ -5205,10 +5256,14 @@ function AdminDokumente({profile, show}) {
 // ═══════════════════════════════════════════════════════════════════
 //  DOKUMENTE — TRAINER ANSICHT (nur lesen/anzeigen)
 // ═══════════════════════════════════════════════════════════════════
-function TrainerDokumente() {
+function TrainerDokumente({profile}) {
   const [docs, setDocs] = useState([]);
   const [viewer, setViewer] = useState(null);
-  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>setDocs(s.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.playerId))); },[]);
+  useEffect(()=>{ return col('dokumente').orderBy('createdAt','desc').onSnapshot(s=>{
+    const all = s.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.playerId);
+    // Show doc if no recipientIds (=all) or if profile.id is in the list
+    setDocs(all.filter(d=>!d.recipientIds?.length || (profile && d.recipientIds.includes(profile.id))));
+  }); },[]);
   const CATS = ['Allgemein','Training','Verwaltung','Satzung','Finanzen','Sonstiges'];
   const grouped = CATS.reduce((a,c)=>{a[c]=docs.filter(d=>d.category===c);return a;},{});
   const blobUrl = React.useMemo(()=>{
@@ -5268,6 +5323,223 @@ function TrainerDokumente() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TRAINER — CONTAINERPLANUNG
+// ═══════════════════════════════════════════════════════════════════
+function TrainerContainerplanung({profile, show}) {
+  const CONTAINERS = [
+    {id:'container1', label:'Container 1', emoji:'📦', color:'#7C3AED', bg:'#F5F3FF', border:'#DDD6FE'},
+    {id:'container2', label:'Container 2', emoji:'🏠', color:'#0369A1', bg:'#F0F9FF', border:'#BAE6FD'},
+  ];
+  const [bookings,  setBookings]  = useState([]);
+  const [month,     setMonth]     = useState(new Date().toISOString().slice(0,7));
+  const [selCont,   setSelCont]   = useState('container1');
+  const [selDate,   setSelDate]   = useState('');
+  const [selFrom,   setSelFrom]   = useState('14:00');
+  const [selTo,     setSelTo]     = useState('20:00');
+  const [eventName, setEventName] = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [delId,     setDelId]     = useState(null);
+
+  useEffect(()=>{
+    const [y,m] = month.split('-');
+    const start = `${y}-${m}-01`;
+    const end   = `${y}-${String(Number(m)%12+1).padStart(2,'0')}-01`;
+    return col('containerplanung')
+      .where('date','>=',start).where('date','<',end)
+      .onSnapshot(s=>setBookings(s.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>a.date.localeCompare(b.date)||(a.timeFrom||'').localeCompare(b.timeFrom||''))));
+  },[month]);
+
+  const hasTimeConflict = (contId, date, from, to) => {
+    const same = bookings.filter(b=>b.containerId===contId && b.date===date);
+    if(!same.length) return null;
+    const toMin = t => { const [h,m]=(t||'00:00').split(':'); return Number(h)*60+Number(m); };
+    const newFrom=toMin(from), newTo=toMin(to);
+    return same.find(b=>{ const bFrom=toMin(b.timeFrom), bTo=toMin(b.timeTo); return newFrom<bTo && newTo>bFrom; });
+  };
+
+  const durationLabel = (from, to) => {
+    if(!from||!to) return '';
+    const [fh,fm]=from.split(':').map(Number), [th,tm]=to.split(':').map(Number);
+    const mins=(th*60+tm)-(fh*60+fm); if(mins<=0) return '';
+    const h=Math.floor(mins/60), m=mins%60;
+    return h>0 ? `${h}h${m>0?` ${m}min`:''}` : `${m}min`;
+  };
+
+  const save = async () => {
+    if(!selDate||!eventName.trim()||!selFrom||!selTo) return;
+    if(selFrom>=selTo){ show('Endzeit muss nach Startzeit liegen','error'); return; }
+    const conflict = hasTimeConflict(selCont, selDate, selFrom, selTo);
+    if(conflict){ show(`Zeitkonflikt mit ${conflict.trainerName} (${conflict.timeFrom}–${conflict.timeTo})!`,'error'); return; }
+    setSaving(true);
+    try {
+      await col('containerplanung').add({
+        containerId: selCont, date: selDate, eventName: eventName.trim(),
+        timeFrom: selFrom, timeTo: selTo,
+        teamId: profile.teamId, trainerName: profile.name, createdAt: ts()
+      });
+      show('Container gebucht ✅'); setEventName(''); setSelDate('');
+    } catch(err) { show(err.message,'error'); }
+    setSaving(false);
+  };
+
+  const doDelete = async () => { await col('containerplanung').doc(delId).delete(); show('Buchung storniert'); setDelId(null); };
+  const prevMonth = () => { const d=new Date(month+'-01'); d.setMonth(d.getMonth()-1); setMonth(d.toISOString().slice(0,7)); };
+  const nextMonth = () => { const d=new Date(month+'-01'); d.setMonth(d.getMonth()+1); setMonth(d.toISOString().slice(0,7)); };
+  const monthLabel = new Date(month+'-01').toLocaleDateString('de-DE',{month:'long',year:'numeric'});
+  const byDate = bookings.reduce((acc,b)=>{ (acc[b.date]=acc[b.date]||[]).push(b); return acc; },{});
+  const DAY_START=6*60, DAY_END=22*60, SPAN=DAY_END-DAY_START;
+  const toMin = t => { const [h,m]=(t||'00:00').split(':'); return Number(h)*60+Number(m); };
+  const barLeft  = t => `${Math.max(0,Math.min(100,(toMin(t)-DAY_START)/SPAN*100))}%`;
+  const barWidth = (f,t) => `${Math.max(2,(toMin(t)-toMin(f))/SPAN*100)}%`;
+  const conflictCheck = selDate&&selFrom&&selTo&&selFrom<selTo ? hasTimeConflict(selCont,selDate,selFrom,selTo) : null;
+
+  return (
+    <div className="p-4">
+      {delId && (
+        <Modal title="Buchung stornieren?" onClose={()=>setDelId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diese Container-Buchung wirklich stornieren?</p>
+          <div className="flex gap-2">
+            <button className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>setDelId(null)}>Abbrechen</button>
+            <button className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm" onClick={doDelete}>Stornieren</button>
+          </div>
+        </Modal>
+      )}
+      <h1 className="text-lg font-semibold mb-1">Containerplanung</h1>
+      <p className="text-xs text-gray-400 mb-4">Reserviere einen Container für Teamveranstaltungen (Weihnachtsfeier, Abschlussfeier, …)</p>
+
+      {/* Container-Status Cards */}
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        {CONTAINERS.map(cont=>{
+          const upcoming = bookings.filter(b=>b.containerId===cont.id && b.date>=todayStr());
+          const next = upcoming[0];
+          return (
+            <div key={cont.id} className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <div className="text-2xl mb-1">{cont.emoji}</div>
+              <div className="text-xs font-semibold mb-1.5" style={{color:cont.color}}>{cont.label}</div>
+              {next ? (
+                <div className="rounded-lg p-1.5" style={{background:cont.bg,border:`1px solid ${cont.border}`}}>
+                  <div className="text-[10px] font-medium mb-0.5" style={{color:cont.color}}>Nächste Buchung</div>
+                  <div className="text-[11px] font-semibold text-gray-800">{fmtDate(next.date)}</div>
+                  {next.timeFrom && <div className="text-[11px] text-gray-600">{next.timeFrom} – {next.timeTo} Uhr</div>}
+                  <div className="text-[10px] text-gray-500 truncate">{next.eventName}</div>
+                </div>
+              ) : (
+                <div className="text-[10px] text-green-600 font-medium">✓ Verfügbar</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Neue Buchung */}
+      <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
+        <div className="text-sm font-semibold mb-3">📦 Container reservieren</div>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {CONTAINERS.map(cont=>(
+            <button key={cont.id} onClick={()=>setSelCont(cont.id)}
+              className={`py-2 rounded-lg border-2 text-xs font-semibold transition-all ${selCont===cont.id?'border-purple-500 bg-purple-50 text-purple-700':'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+              {cont.emoji} {cont.label}
+            </button>
+          ))}
+        </div>
+        <Inp label="Datum der Veranstaltung" type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} min={todayStr()}/>
+        <div className="flex gap-2 mb-3">
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Von</label>
+            <input type="time" value={selFrom} onChange={e=>setSelFrom(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Bis</label>
+            <input type="time" value={selTo} onChange={e=>setSelTo(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"/>
+          </div>
+          {selFrom && selTo && selFrom<selTo && (
+            <div className="flex items-end pb-2">
+              <span className="text-xs font-semibold text-gray-500 whitespace-nowrap">{durationLabel(selFrom,selTo)}</span>
+            </div>
+          )}
+        </div>
+        <Inp label="Veranstaltungsname" value={eventName} onChange={e=>setEventName(e.target.value)} placeholder="z.B. Weihnachtsfeier U19"/>
+        {conflictCheck && (
+          <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-3 py-2">
+            ⚠️ Zeitüberschneidung mit <strong>{conflictCheck.trainerName}</strong> ({conflictCheck.timeFrom}–{conflictCheck.timeTo} Uhr, {conflictCheck.eventName})
+          </div>
+        )}
+        <button onClick={save} disabled={saving||!selDate||!eventName.trim()||!selFrom||!selTo||selFrom>=selTo}
+          className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold disabled:opacity-40 transition-colors">
+          {saving ? '⏳ Buchen…' : 'Container reservieren'}
+        </button>
+      </div>
+
+      {/* Monats-Kalender */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <button onClick={prevMonth} className="p-1 rounded hover:bg-gray-100 text-gray-500">◀</button>
+          <span className="text-sm font-semibold">{monthLabel}</span>
+          <button onClick={nextMonth} className="p-1 rounded hover:bg-gray-100 text-gray-500">▶</button>
+        </div>
+        {Object.keys(byDate).length===0 ? (
+          <div className="text-center text-gray-400 py-8 text-sm">Keine Buchungen in diesem Monat.</div>
+        ) : (
+          <div className="divide-y">
+            {Object.entries(byDate).map(([date, dayBookings])=>(
+              <div key={date} className="px-4 py-3">
+                <div className="text-xs font-semibold text-gray-500 mb-2">{fmtDate(date)}</div>
+                <div className="relative h-7 bg-gray-100 rounded-lg mb-2 overflow-hidden">
+                  {[8,10,12,14,16,18,20].map(h=>(
+                    <div key={h} className="absolute top-0 bottom-0 border-l border-gray-200 flex items-end pb-0.5"
+                      style={{left:`${(h*60-DAY_START)/SPAN*100}%`}}>
+                      <span className="text-[9px] text-gray-300 pl-0.5">{h}</span>
+                    </div>
+                  ))}
+                  {dayBookings.map(b=>{
+                    const cont=CONTAINERS.find(x=>x.id===b.containerId)||CONTAINERS[0];
+                    const from=b.timeFrom||'14:00', to=b.timeTo||'20:00';
+                    return (
+                      <div key={b.id} title={`${cont.label}: ${from}–${to} · ${b.eventName}`}
+                        className="absolute top-1 bottom-1 rounded flex items-center justify-center overflow-hidden"
+                        style={{left:barLeft(from),width:barWidth(from,to),background:cont.color,opacity:0.85}}>
+                        <span className="text-[10px] text-white font-semibold px-1 truncate">{cont.emoji} {from}–{to}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {dayBookings.map(b=>{
+                  const cont=CONTAINERS.find(x=>x.id===b.containerId)||CONTAINERS[0];
+                  const isOwn=b.trainerName===profile.name;
+                  const dur=b.timeFrom&&b.timeTo ? durationLabel(b.timeFrom,b.timeTo) : '';
+                  return (
+                    <div key={b.id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                      <span className="text-base flex-shrink-0">{cont.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold" style={{color:cont.color}}>{cont.label}</span>
+                          {b.timeFrom && (
+                            <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">
+                              {b.timeFrom} – {b.timeTo} Uhr{dur?` (${dur})`:''}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600 truncate">{b.eventName} · {b.trainerName}</div>
+                      </div>
+                      {isOwn && (
+                        <button onClick={()=>setDelId(b.id)} className="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-red-50 text-xs flex-shrink-0">🗑</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -7889,6 +8161,8 @@ function AdminApp({profile}) {
       {id:'nachrichten',   icon:'💬',  label:'Nachrichten'},
     ]},
     {section:'Management', items:[
+      {id:'busplanung',    icon:'🚌',  label:'Busplanung'},
+      {id:'containerplanung', icon:'📦', label:'Containerplanung'},
       {id:'kalender',      icon:'📆',  label:'Vereinskalender'},
       {id:'platz',         icon:'🏟️', label:'Platzverwaltung'},
       {id:'sponsoren',     icon:'🤝',  label:'Sponsoren'},
@@ -7913,6 +8187,8 @@ function AdminApp({profile}) {
     dokumente:          <AdminDokumente profile={profile} show={show}/>,
     uebungen:           <UebungenDB profile={profile} show={show}/>,
     nachrichten:        <VorstandNachrichten profile={profile}/>,
+    busplanung:         <TrainerBusplanung profile={profile} show={show}/>,
+    containerplanung:   <TrainerContainerplanung profile={profile} show={show}/>,
     kalender:           <Vereinskalender profile={profile} canEdit={true}/>,
     platz:              <AdminPlatzverwaltung profile={profile} show={show}/>,
     sponsoren:          <AdminSponsoren show={show}/>,
