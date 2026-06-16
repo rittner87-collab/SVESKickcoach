@@ -6217,12 +6217,13 @@ function TrainerBusplanung({profile, show}) {
     {id:'silber', label:'Bus Silber', emoji:'🚎', color:'#4B5563', bg:'#F9FAFB', border:'#E5E7EB'},
   ];
   const [bookings,  setBookings]  = useState([]);
+  const [teams,     setTeams]     = useState([]);
   const [month,     setMonth]     = useState(new Date().toISOString().slice(0,7));
   const [selBus,    setSelBus]    = useState('rot');
   const [selDate,   setSelDate]   = useState('');
   const [selFrom,   setSelFrom]   = useState('08:00');
   const [selTo,     setSelTo]     = useState('14:00');
-  const [opponent,  setOpponent]  = useState('');
+  const [selTeam,   setSelTeam]   = useState('');
   const [saving,    setSaving]    = useState(false);
   const [delId,     setDelId]     = useState(null);
 
@@ -6235,6 +6236,18 @@ function TrainerBusplanung({profile, show}) {
       .onSnapshot(s=>setBookings(s.docs.map(d=>({id:d.id,...d.data()}))
         .sort((a,b)=>a.date.localeCompare(b.date)||( a.timeFrom||'').localeCompare(b.timeFrom||''))));
   },[month]);
+
+  useEffect(()=>{
+    col('teams').get().then(s=>{
+      const list = s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.name||'').localeCompare(b.name||'','de'));
+      setTeams(list);
+      // Pre-select trainer's own team if available
+      if(!selTeam && profile.teamId) {
+        const own = list.find(t=>t.id===profile.teamId||t.id===profile.trainerTeamId);
+        if(own) setSelTeam(own.name);
+      }
+    });
+  },[]);
 
   // Check time overlap for same bus on same day
   const hasTimeConflict = (busId, date, from, to) => {
@@ -6260,21 +6273,21 @@ function TrainerBusplanung({profile, show}) {
   };
 
   const save = async () => {
-    if(!selDate||!opponent.trim()||!selFrom||!selTo) return;
+    if(!selDate||!selTeam||!selFrom||!selTo) return;
     if(selFrom>=selTo){ show('Endzeit muss nach Startzeit liegen','error'); return; }
     const conflict = hasTimeConflict(selBus, selDate, selFrom, selTo);
     if(conflict){
-      show(`Zeitkonflikt mit ${conflict.trainerName} (${conflict.timeFrom}–${conflict.timeTo})!`,'error');
+      show(`Zeitkonflikt mit ${conflict.teamName||conflict.trainerName} (${conflict.timeFrom}–${conflict.timeTo})!`,'error');
       return;
     }
     setSaving(true);
     try {
       await col('bus_bookings').add({
-        busId: selBus, date: selDate, opponent: opponent.trim(),
+        busId: selBus, date: selDate, teamName: selTeam,
         timeFrom: selFrom, timeTo: selTo,
-        teamId: profile.teamId, trainerName: profile.name, createdAt: ts()
+        trainerName: profile.name, createdAt: ts()
       });
-      show('Bus gebucht ✅'); setOpponent(''); setSelDate('');
+      show('Bus gebucht ✅'); setSelDate('');
     } catch(err) { show(err.message,'error'); }
     setSaving(false);
   };
@@ -6329,7 +6342,7 @@ function TrainerBusplanung({profile, show}) {
                   <div className="text-[10px] font-medium mb-0.5" style={{color:bus.color}}>Nächste Buchung</div>
                   <div className="text-[11px] font-semibold text-gray-800">{fmtDate(next.date)}</div>
                   {next.timeFrom && <div className="text-[11px] text-gray-600">{next.timeFrom} – {next.timeTo} Uhr</div>}
-                  <div className="text-[10px] text-gray-500 truncate">{next.opponent}</div>
+                  <div className="text-[10px] text-gray-500 truncate">{next.teamName}</div>
                 </div>
               ) : (
                 <div className="text-[10px] text-green-600 font-medium">✓ Verfügbar</div>
@@ -6350,7 +6363,15 @@ function TrainerBusplanung({profile, show}) {
             </button>
           ))}
         </div>
-        <Inp label="Datum (Auswärtsspiel)" type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} min={todayStr()}/>
+        <Inp label="Datum" type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} min={todayStr()}/>
+        <div className="mb-3">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Team</label>
+          <select value={selTeam} onChange={e=>setSelTeam(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 bg-white">
+            <option value="">— Team auswählen —</option>
+            {teams.map(t=><option key={t.id} value={t.name}>{t.name}</option>)}
+          </select>
+        </div>
         <div className="flex gap-2 mb-3">
           <div className="flex-1">
             <label className="block text-xs font-medium text-gray-600 mb-1">Von</label>
@@ -6368,13 +6389,12 @@ function TrainerBusplanung({profile, show}) {
             </div>
           )}
         </div>
-        <Inp label="Gegner" value={opponent} onChange={e=>setOpponent(e.target.value)} placeholder="z.B. FC Neustadt"/>
         {conflictCheck && (
           <div className="mb-3 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-3 py-2">
-            ⚠️ Zeitüberschneidung mit <strong>{conflictCheck.trainerName}</strong> ({conflictCheck.timeFrom}–{conflictCheck.timeTo} Uhr, {conflictCheck.opponent})
+            ⚠️ Zeitüberschneidung mit <strong>{conflictCheck.teamName||conflictCheck.trainerName}</strong> ({conflictCheck.timeFrom}–{conflictCheck.timeTo} Uhr)
           </div>
         )}
-        <button onClick={save} disabled={saving||!selDate||!opponent.trim()||!selFrom||!selTo||selFrom>=selTo}
+        <button onClick={save} disabled={saving||!selDate||!selTeam||!selFrom||!selTo||selFrom>=selTo}
           className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-40 transition-colors">
           {saving ? '⏳ Buchen…' : 'Bus reservieren'}
         </button>
@@ -6409,7 +6429,7 @@ function TrainerBusplanung({profile, show}) {
                     const bus = BUSES.find(x=>x.id===b.busId)||BUSES[0];
                     const from = b.timeFrom||'08:00', to = b.timeTo||'14:00';
                     return (
-                      <div key={b.id} title={`${bus.label}: ${from}–${to} · ${b.opponent}`}
+                      <div key={b.id} title={`${bus.label}: ${from}–${to} · ${b.teamName||b.opponent||''}`}
                         className="absolute top-1 bottom-1 rounded flex items-center justify-center overflow-hidden"
                         style={{left:barLeft(from),width:barWidth(from,to),background:bus.color,opacity:0.85}}>
                         <span className="text-[10px] text-white font-semibold px-1 truncate">{bus.emoji} {from}–{to}</span>
@@ -6434,7 +6454,7 @@ function TrainerBusplanung({profile, show}) {
                             </span>
                           )}
                         </div>
-                        <div className="text-xs text-gray-600 truncate">{b.opponent} · {b.trainerName}</div>
+                        <div className="text-xs text-gray-600 truncate">{b.teamName||b.opponent||'–'} · {b.trainerName}</div>
                       </div>
                       {isOwn && (
                         <button onClick={()=>setDelId(b.id)} className="text-gray-400 hover:text-red-600 p-1 rounded hover:bg-red-50 text-xs flex-shrink-0">🗑</button>
