@@ -871,9 +871,10 @@ function TrainerTraining({profile, show}) {
       await col('sessions').doc(editing).update({...baseForm, ...deadlineData});
       show('Trainingseinheit aktualisiert ✅');
     } else if (serie && !editing) {
+      const serieId = `serie_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
       const dates = getRecurringDates(baseForm.date||todayStr(), serieWeekday, serieCount);
       for (const date of dates) {
-        const ref = await col('sessions').add({...baseForm, ...deadlineData, date, teamId:profile.teamId, createdAt:ts()});
+        const ref = await col('sessions').add({...baseForm, ...deadlineData, date, serieId, teamId:profile.teamId, createdAt:ts()});
         notifyNewTraining({...baseForm, date, teamId:profile.teamId, id:ref.id}).catch(()=>{});
       }
       show(`${dates.length} Trainingseinheiten erstellt ✅`);
@@ -885,9 +886,17 @@ function TrainerTraining({profile, show}) {
     setForm(EMPTY); setOpen(false); setEditing(null);
   };
 
-  const doDelete = async (id) => {
-    await col('sessions').doc(id).delete();
+  const doDelete = async () => {
+    await col('sessions').doc(deleting.id).delete();
     show('Einheit gelöscht'); setDeleting(null);
+  };
+
+  const doDeleteSerie = async () => {
+    const snap = await col('sessions').where('serieId','==',deleting.serieId).get();
+    const batch = firebase.firestore().batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    show(`${snap.docs.length} Serieneinheiten gelöscht ✅`); setDeleting(null);
   };
 
   // Trainer setzt Status für einen Spieler
@@ -918,11 +927,31 @@ function TrainerTraining({profile, show}) {
 
       {deleting && (
         <Modal title="Einheit löschen?" onClose={()=>setDeleting(null)}>
-          <p className="text-sm text-gray-600 mb-4">Diese Trainingseinheit wirklich löschen?</p>
-          <div className="flex gap-2">
-            <Btn variant="secondary" className="flex-1" onClick={()=>setDeleting(null)}>Abbrechen</Btn>
-            <Btn className="flex-1 bg-red-700" onClick={()=>doDelete(deleting)}>Löschen</Btn>
-          </div>
+          {deleting.serieId ? (
+            <>
+              <p className="text-sm text-gray-600 mb-1">
+                <strong>{fmtDate(deleting.date)} · {deleting.time} Uhr</strong>
+              </p>
+              <p className="text-sm text-gray-600 mb-4">Dieser Termin gehört zu einer Serie. Was soll gelöscht werden?</p>
+              <div className="space-y-2">
+                <Btn variant="secondary" className="w-full text-left justify-start" onClick={doDelete}>
+                  🗑 Nur diesen Termin löschen
+                </Btn>
+                <Btn className="w-full bg-red-700 text-left justify-start" onClick={doDeleteSerie}>
+                  🗑🗑 Komplette Serie löschen
+                </Btn>
+                <Btn variant="secondary" className="w-full" onClick={()=>setDeleting(null)}>Abbrechen</Btn>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-gray-600 mb-4">Diese Trainingseinheit wirklich löschen?</p>
+              <div className="flex gap-2">
+                <Btn variant="secondary" className="flex-1" onClick={()=>setDeleting(null)}>Abbrechen</Btn>
+                <Btn className="flex-1 bg-red-700" onClick={doDelete}>Löschen</Btn>
+              </div>
+            </>
+          )}
         </Modal>
       )}
 
@@ -1058,11 +1087,11 @@ function TrainerTraining({profile, show}) {
         <div className="space-y-2">
           {upcoming.length>0 && <>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
-            {upcoming.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} totalPlayers={players.length} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
+            {upcoming.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} totalPlayers={players.length} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s)}/>)}
           </>}
           {past.length>0 && <>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
-            {past.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} faded totalPlayers={players.length} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
+            {past.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} faded totalPlayers={players.length} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s)}/>)}
           </>}
         </div>
       )}
