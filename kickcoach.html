@@ -6797,8 +6797,8 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
                 <div className="text-sm font-medium truncate flex items-center gap-1.5">
                   <span className="truncate">{p.name}</span>
                   <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 inline-block"
-                    style={{background:p.zweitspielrecht?'#3b82f6':p.vereinsmitglied?'#22c55e':'#ef4444'}}
-                    title={p.zweitspielrecht?'Zweitspielrecht':p.vereinsmitglied?'Mitglied':(p.spielStatus==='in_bearbeitung'?'In Bearbeitung':'Kein Status')}/>
+                    style={{background:p.zweitspielrecht?'#3b82f6':p.spielStatus==='in_bearbeitung'?'#ef4444':(p.vereinsmitglied&&p.spielStatus==='spielberechtigt')?'#22c55e':'#ef4444'}}
+                    title={p.zweitspielrecht?'Zweitspielrecht':p.spielStatus==='in_bearbeitung'?'In Bearbeitung (Vorrang)':(p.vereinsmitglied&&p.spielStatus==='spielberechtigt')?'Mitglied & Spielberechtigt':'Unvollständig'}/>
                 </div>
                 <div className="text-xs text-gray-400 truncate">
                   {p.dob && <span>{fmtDob(p.dob)} · {fmtAge(p.dob)} J. · </span>}
@@ -6942,8 +6942,8 @@ function AdminPlayerDetail({player, onClose, show}) {
           <div className="flex items-center gap-2 mb-3">
             <div className="text-xs font-semibold text-gray-600">Status & Mitgliedschaft</div>
             <span className="w-2.5 h-2.5 rounded-full inline-block"
-              style={{background:zweitspielrecht?'#3b82f6':vereinsmitglied?'#22c55e':'#ef4444'}}
-              title={zweitspielrecht?'Zweitspielrecht':vereinsmitglied?'Mitglied':(spielStatus==='in_bearbeitung'?'In Bearbeitung':'Spielberechtigt')}/>
+              style={{background:zweitspielrecht?'#3b82f6':spielStatus==='in_bearbeitung'?'#ef4444':(vereinsmitglied&&spielStatus==='spielberechtigt')?'#22c55e':'#ef4444'}}
+              title={zweitspielrecht?'Zweitspielrecht':spielStatus==='in_bearbeitung'?'In Bearbeitung (Vorrang)':(vereinsmitglied&&spielStatus==='spielberechtigt')?'Mitglied & Spielberechtigt':'Unvollständig'}/>
           </div>
           {/* Status-Auswahl */}
           <div className="mb-3">
