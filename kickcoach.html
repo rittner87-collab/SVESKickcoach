@@ -57,6 +57,19 @@ const randColor= () => PALETTE[Math.floor(Math.random()*PALETTE.length)];
 const initials = (n='?') => (n||'?').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2);
 const todayStr = () => new Date().toISOString().split('T')[0];
 const WEEKDAYS_DE = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+function fmtDeadlineLabel(s) {
+  if (s.cancelDaysBefore === null || s.cancelDaysBefore === undefined || s.cancelDaysBefore === '') return null;
+  const n = Number(s.cancelDaysBefore);
+  const t = s.cancelByTime || '23:59';
+  if (n === 0) return `Am Trainingstag bis ${t} Uhr`;
+  return `${n} Tag${n===1?'':'e'} vor dem Training bis ${t} Uhr`;
+}
+function isDeadlinePassed(s) {
+  if (s.cancelDaysBefore === null || s.cancelDaysBefore === undefined || s.cancelDaysBefore === '' || !s.date) return false;
+  const d = new Date(s.date + 'T' + (s.cancelByTime||'23:59') + ':00');
+  d.setDate(d.getDate() - Number(s.cancelDaysBefore));
+  return new Date() > d;
+}
 function getRecurringDates(fromDate, weekday, count) {
   const dates = [];
   const d = new Date(fromDate + 'T12:00:00');
@@ -809,7 +822,7 @@ function TrainerKader({profile, show}) {
 //  TRAINER — TRAININGSPLAN
 // ═══════════════════════════════════════════════════════════════════
 function TrainerTraining({profile, show}) {
-  const EMPTY = {date:'',time:'18:00',duration:'90',location:'',notes:'',drillIds:[],uebungIds:[],cancellationDeadline:'',serie:false,serieWeekday:2,serieCount:8};
+  const EMPTY = {date:'',time:'18:00',duration:'90',location:'',notes:'',drillIds:[],uebungIds:[],cancelDaysBefore:'',cancelByTime:'18:00',serie:false,serieWeekday:2,serieCount:8};
   const [sessions,   setSessions]  = useState([]);
   const [drills,     setDrills]    = useState([]);
   const [uebungen,   setUebungen]  = useState([]);
@@ -848,23 +861,24 @@ function TrainerTraining({profile, show}) {
   },[]);
 
   const openNew  = () => { setEditing(null); setForm(EMPTY); setUebSearch(''); setOpen(true); };
-  const openEdit = (s) => { setEditing(s.id); setForm({date:s.date||'',time:s.time||'18:00',duration:s.duration||'90',location:s.location||'',notes:s.notes||'',drillIds:s.drillIds||[],uebungIds:s.uebungIds||[],cancellationDeadline:s.cancellationDeadline||'',serie:false,serieWeekday:2,serieCount:8}); setUebSearch(''); setOpen(true); };
+  const openEdit = (s) => { setEditing(s.id); setForm({date:s.date||'',time:s.time||'18:00',duration:s.duration||'90',location:s.location||'',notes:s.notes||'',drillIds:s.drillIds||[],uebungIds:s.uebungIds||[],cancelDaysBefore:s.cancelDaysBefore!==undefined&&s.cancelDaysBefore!==''?String(s.cancelDaysBefore):'',cancelByTime:s.cancelByTime||'18:00',serie:false,serieWeekday:2,serieCount:8}); setUebSearch(''); setOpen(true); };
 
   const save = async (e) => {
     e.preventDefault();
-    const {serie, serieWeekday, serieCount, ...baseForm} = form;
+    const {serie, serieWeekday, serieCount, cancelDaysBefore, cancelByTime, ...baseForm} = form;
+    const deadlineData = cancelDaysBefore !== '' ? {cancelDaysBefore: Number(cancelDaysBefore), cancelByTime} : {cancelDaysBefore: null, cancelByTime: null};
     if (editing) {
-      await col('sessions').doc(editing).update(baseForm);
+      await col('sessions').doc(editing).update({...baseForm, ...deadlineData});
       show('Trainingseinheit aktualisiert ✅');
     } else if (serie && !editing) {
       const dates = getRecurringDates(baseForm.date||todayStr(), serieWeekday, serieCount);
       for (const date of dates) {
-        const ref = await col('sessions').add({...baseForm, date, teamId:profile.teamId, createdAt:ts()});
+        const ref = await col('sessions').add({...baseForm, ...deadlineData, date, teamId:profile.teamId, createdAt:ts()});
         notifyNewTraining({...baseForm, date, teamId:profile.teamId, id:ref.id}).catch(()=>{});
       }
       show(`${dates.length} Trainingseinheiten erstellt ✅`);
     } else {
-      const ref = await col('sessions').add({...baseForm, teamId:profile.teamId, createdAt:ts()});
+      const ref = await col('sessions').add({...baseForm, ...deadlineData, teamId:profile.teamId, createdAt:ts()});
       show('Trainingseinheit gespeichert ✅');
       notifyNewTraining({...baseForm, teamId:profile.teamId, id:ref.id}).catch(()=>{});
     }
@@ -972,7 +986,27 @@ function TrainerTraining({profile, show}) {
               <Inp label="Dauer (Min)" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})}/>
               <Inp label="Ort" value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Platz 1"/>
             </div>
-            <Inp label="Abmeldefrist (Datum bis)" type="date" value={form.cancellationDeadline} onChange={e=>setForm({...form,cancellationDeadline:e.target.value})}/>
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Abmeldefrist</label>
+              <div className="flex gap-2 items-center flex-wrap">
+                <select value={form.cancelDaysBefore} onChange={e=>setForm({...form,cancelDaysBefore:e.target.value})}
+                  className="border border-gray-200 rounded-lg px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-red-500 bg-white">
+                  <option value="">Keine Frist</option>
+                  <option value="0">Am Trainingstag</option>
+                  <option value="1">1 Tag vorher</option>
+                  <option value="2">2 Tage vorher</option>
+                  <option value="3">3 Tage vorher</option>
+                  <option value="5">5 Tage vorher</option>
+                  <option value="7">7 Tage vorher</option>
+                </select>
+                {form.cancelDaysBefore !== '' && <>
+                  <span className="text-xs text-gray-500">bis</span>
+                  <input type="time" value={form.cancelByTime} onChange={e=>setForm({...form,cancelByTime:e.target.value})}
+                    className="border border-gray-200 rounded-lg px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-red-500"/>
+                  <span className="text-xs text-gray-500">Uhr</span>
+                </>}
+              </div>
+            </div>
             <Txt label="Notizen / Inhalte" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
             {drills.length>0 && (
               <div className="mb-3">
@@ -1053,7 +1087,7 @@ const SessionCard = ({s, drillMap, att, faded=false, totalPlayers=0, onDetail, o
           </> : null}
         </div>
       </div>
-      {s.cancellationDeadline && <div className="text-[10px] text-amber-600 mt-1">⏰ Abmeldefrist: {fmtDate(s.cancellationDeadline)}</div>}
+      {fmtDeadlineLabel(s) && <div className="text-[10px] text-amber-600 mt-1">⏰ Abmeldefrist: {fmtDeadlineLabel(s)}</div>}
       {s.notes && <p className="text-xs text-gray-600 mt-1.5 leading-relaxed line-clamp-2">{s.notes}</p>}
       {s.drillIds?.length>0 && (
         <div className="flex gap-1.5 mt-2 flex-wrap">
@@ -3562,7 +3596,7 @@ function PlayerTraining({profile}) {
                 <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={()=>setDetailSession(s)}>
                   <div className="text-sm font-semibold">{fmtDate(s.date)} · {s.time} Uhr</div>
                   <div className="text-xs text-gray-400">{s.duration} Min{s.location?' · '+s.location:''}</div>
-                  {s.cancellationDeadline && <div className="text-[10px] text-amber-600 mt-0.5">⏰ Abmeldefrist: {fmtDate(s.cancellationDeadline)}</div>}
+                  {fmtDeadlineLabel(s) && <div className="text-[10px] text-amber-600 mt-0.5">⏰ Abmeldefrist: {fmtDeadlineLabel(s)}</div>}
                   {s.notes&&<p className="text-xs text-gray-500 mt-1 line-clamp-2">{s.notes}</p>}
                   <div className="text-[10px] text-gray-400 mt-1.5">📎 Tippen für Details & Anhänge</div>
                 </div>
@@ -3570,7 +3604,7 @@ function PlayerTraining({profile}) {
                 <div className="flex items-center gap-2 px-4 pb-3" onClick={e=>e.stopPropagation()}>
                   {(() => {
                     const st = attendance[s.id];
-                    const deadlinePassed = s.cancellationDeadline && todayStr() > s.cancellationDeadline;
+                    const deadlinePassed = isDeadlinePassed(s);
                     if (st==='no') {
                       return <>
                         <span className="text-xs font-semibold text-red-600">❌ Abgemeldet</span>
@@ -6796,7 +6830,7 @@ function AdminPlayerDetail({player, onClose, show}) {
       mitgliedStatus: finalStatus,
       anmeldungStatus: finalStatus==='mitglied' ? '' : anmeldungStatus,
     });
-    show('Gespeichert ✅'); setSaving(false);
+    show('Gespeichert ✅'); setSaving(false); onClose();
   };
 
   const uploadDoc = async (e) => {
@@ -6950,8 +6984,8 @@ function AdminPlayerDetail({player, onClose, show}) {
         </div>
 
         <button onClick={saveNotes} disabled={saving}
-          className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold disabled:opacity-40 transition-colors">
-          {saving?'⏳ Speichern…':'Notizen & Vereinsarbeit speichern'}
+          className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-bold disabled:opacity-40 transition-colors shadow-sm">
+          {saving?'⏳ Speichern…':'✅ Speichern & Schließen'}
         </button>
 
         {/* Dokumente */}
