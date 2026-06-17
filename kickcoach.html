@@ -56,6 +56,18 @@ const PALETTE  = ['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#
 const randColor= () => PALETTE[Math.floor(Math.random()*PALETTE.length)];
 const initials = (n='?') => (n||'?').split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2);
 const todayStr = () => new Date().toISOString().split('T')[0];
+const WEEKDAYS_DE = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+function getRecurringDates(fromDate, weekday, count) {
+  const dates = [];
+  const d = new Date(fromDate + 'T12:00:00');
+  const diff = (weekday - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + diff);
+  for (let i = 0; i < count; i++) {
+    dates.push(d.toISOString().split('T')[0]);
+    d.setDate(d.getDate() + 7);
+  }
+  return dates;
+}
 const fmtDate  = (s) => s ? new Date(s+'T12:00:00').toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit',year:'numeric'}) : '';
 const byLastName  = (a,b) => { const la=(a.name||'').trim().split(' ').pop().toLowerCase();    const lb=(b.name||'').trim().split(' ').pop().toLowerCase();    return la.localeCompare(lb,'de'); };
 const byFirstName = (a,b) => { const fa=(a.name||'').trim().split(' ')[0].toLowerCase(); const fb=(b.name||'').trim().split(' ')[0].toLowerCase(); return fa.localeCompare(fb,'de'); };
@@ -797,7 +809,7 @@ function TrainerKader({profile, show}) {
 //  TRAINER — TRAININGSPLAN
 // ═══════════════════════════════════════════════════════════════════
 function TrainerTraining({profile, show}) {
-  const EMPTY = {date:'',time:'18:00',duration:'90',location:'',notes:'',drillIds:[],uebungIds:[]};
+  const EMPTY = {date:'',time:'18:00',duration:'90',location:'',notes:'',drillIds:[],uebungIds:[],cancellationDeadline:'',serie:false,serieWeekday:2,serieCount:8};
   const [sessions,   setSessions]  = useState([]);
   const [drills,     setDrills]    = useState([]);
   const [uebungen,   setUebungen]  = useState([]);
@@ -836,18 +848,25 @@ function TrainerTraining({profile, show}) {
   },[]);
 
   const openNew  = () => { setEditing(null); setForm(EMPTY); setUebSearch(''); setOpen(true); };
-  const openEdit = (s) => { setEditing(s.id); setForm({date:s.date||'',time:s.time||'18:00',duration:s.duration||'90',location:s.location||'',notes:s.notes||'',drillIds:s.drillIds||[],uebungIds:s.uebungIds||[]}); setUebSearch(''); setOpen(true); };
+  const openEdit = (s) => { setEditing(s.id); setForm({date:s.date||'',time:s.time||'18:00',duration:s.duration||'90',location:s.location||'',notes:s.notes||'',drillIds:s.drillIds||[],uebungIds:s.uebungIds||[],cancellationDeadline:s.cancellationDeadline||'',serie:false,serieWeekday:2,serieCount:8}); setUebSearch(''); setOpen(true); };
 
   const save = async (e) => {
     e.preventDefault();
+    const {serie, serieWeekday, serieCount, ...baseForm} = form;
     if (editing) {
-      await col('sessions').doc(editing).update({...form});
+      await col('sessions').doc(editing).update(baseForm);
       show('Trainingseinheit aktualisiert ✅');
+    } else if (serie && !editing) {
+      const dates = getRecurringDates(baseForm.date||todayStr(), serieWeekday, serieCount);
+      for (const date of dates) {
+        const ref = await col('sessions').add({...baseForm, date, teamId:profile.teamId, createdAt:ts()});
+        notifyNewTraining({...baseForm, date, teamId:profile.teamId, id:ref.id}).catch(()=>{});
+      }
+      show(`${dates.length} Trainingseinheiten erstellt ✅`);
     } else {
-      const ref = await col('sessions').add({...form, teamId:profile.teamId, createdAt:ts()});
+      const ref = await col('sessions').add({...baseForm, teamId:profile.teamId, createdAt:ts()});
       show('Trainingseinheit gespeichert ✅');
-      // E-Mail-Benachrichtigung (im Hintergrund, kein await um UI nicht zu blockieren)
-      notifyNewTraining({...form, teamId:profile.teamId, id:ref.id}).catch(()=>{});
+      notifyNewTraining({...baseForm, teamId:profile.teamId, id:ref.id}).catch(()=>{});
     }
     setForm(EMPTY); setOpen(false); setEditing(null);
   };
@@ -911,14 +930,49 @@ function TrainerTraining({profile, show}) {
       {open && (
         <Modal title={editing ? 'Einheit bearbeiten' : 'Trainingseinheit'} onClose={()=>{setOpen(false);setEditing(null);}}>
           <form onSubmit={save}>
+            {/* Serientermin Toggle — nur bei Neuanlage */}
+            {!editing && (
+              <div className="mb-3 bg-purple-50 border border-purple-200 rounded-xl p-3">
+                <label className="flex items-center gap-2 cursor-pointer mb-2">
+                  <input type="checkbox" checked={form.serie} onChange={e=>setForm({...form,serie:e.target.checked})} className="accent-purple-600 w-4 h-4"/>
+                  <span className="text-xs font-semibold text-purple-700">🔄 Serientermin erstellen</span>
+                </label>
+                {form.serie && (
+                  <div className="space-y-2 mt-2">
+                    <div>
+                      <div className="text-[10px] text-purple-600 font-medium mb-1">Wochentag</div>
+                      <div className="flex gap-1 flex-wrap">
+                        {WEEKDAYS_DE.map((d,i)=>(
+                          <button key={i} type="button" onClick={()=>setForm(f=>({...f,serieWeekday:i}))}
+                            className={`px-2 py-1 rounded-lg text-xs font-semibold border transition-all ${form.serieWeekday===i?'bg-purple-600 text-white border-purple-600':'bg-white text-purple-700 border-purple-300 hover:bg-purple-100'}`}>{d}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <label className="text-[10px] text-purple-600 font-medium whitespace-nowrap">Ab Datum</label>
+                      <input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required
+                        className="flex-1 border border-purple-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400"/>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <label className="text-[10px] text-purple-600 font-medium whitespace-nowrap">Wiederholungen</label>
+                      <input type="number" value={form.serieCount} min="1" max="52"
+                        onChange={e=>setForm({...form,serieCount:parseInt(e.target.value)||1})}
+                        className="w-20 border border-purple-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400"/>
+                      <span className="text-[10px] text-purple-500">= {form.serieCount}×{WEEKDAYS_DE[form.serieWeekday]} ab {form.date||'?'}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex gap-2">
-              <Inp label="Datum" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/>
+              {(!form.serie || editing) && <Inp label="Datum" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} required/>}
               <Inp label="Zeit" type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/>
             </div>
             <div className="flex gap-2">
               <Inp label="Dauer (Min)" value={form.duration} onChange={e=>setForm({...form,duration:e.target.value})}/>
               <Inp label="Ort" value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Platz 1"/>
             </div>
+            <Inp label="Abmeldefrist (Datum bis)" type="date" value={form.cancellationDeadline} onChange={e=>setForm({...form,cancellationDeadline:e.target.value})}/>
             <Txt label="Notizen / Inhalte" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
             {drills.length>0 && (
               <div className="mb-3">
@@ -970,11 +1024,11 @@ function TrainerTraining({profile, show}) {
         <div className="space-y-2">
           {upcoming.length>0 && <>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
-            {upcoming.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
+            {upcoming.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} totalPlayers={players.length} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
           </>}
           {past.length>0 && <>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
-            {past.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} faded onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
+            {past.map(s=><SessionCard key={s.id} s={s} drillMap={drillMap} att={attMap[s.id]} faded totalPlayers={players.length} onDetail={()=>setDetail(s)} onEdit={openEdit} onDelete={()=>setDeleting(s.id)}/>)}
           </>}
         </div>
       )}
@@ -982,7 +1036,7 @@ function TrainerTraining({profile, show}) {
   );
 }
 
-const SessionCard = ({s, drillMap, att, faded=false, onDetail, onEdit, onDelete}) => (
+const SessionCard = ({s, drillMap, att, faded=false, totalPlayers=0, onDetail, onEdit, onDelete}) => (
   <div className={`border rounded-xl overflow-hidden ${faded?'bg-gray-50 border-gray-200 opacity-80':'bg-white border-gray-200'}`}>
     {/* Anklickbarer Hauptbereich */}
     <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={onDetail}>
@@ -991,15 +1045,15 @@ const SessionCard = ({s, drillMap, att, faded=false, onDetail, onEdit, onDelete}
           <div className="font-semibold text-sm">{fmtDate(s.date)} · {s.time} Uhr</div>
           <div className="text-xs text-gray-400 mt-0.5">{s.duration} Min{s.location?' · '+s.location:''}</div>
         </div>
-        {/* Zusagen-Badges */}
+        {/* Zusagen-Badges (proforma: alle zugesagt außer explizit abgemeldet) */}
         <div className="flex gap-1 flex-shrink-0">
-          {att && (att.yes>0||att.no>0||att.maybe>0) ? <>
-            <span className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ {att.yes}</span>
-            <span className="text-[11px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">❌ {att.no}</span>
-            <span className="text-[11px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-medium">❓ {att.maybe}</span>
-          </> : <span className="text-[10px] text-gray-300">Keine Zusagen</span>}
+          {totalPlayers > 0 ? <>
+            <span className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ {totalPlayers-(att?.no||0)}</span>
+            {(att?.no||0)>0 && <span className="text-[11px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">❌ {att.no}</span>}
+          </> : null}
         </div>
       </div>
+      {s.cancellationDeadline && <div className="text-[10px] text-amber-600 mt-1">⏰ Abmeldefrist: {fmtDate(s.cancellationDeadline)}</div>}
       {s.notes && <p className="text-xs text-gray-600 mt-1.5 leading-relaxed line-clamp-2">{s.notes}</p>}
       {s.drillIds?.length>0 && (
         <div className="flex gap-1.5 mt-2 flex-wrap">
@@ -3508,21 +3562,35 @@ function PlayerTraining({profile}) {
                 <div className="p-4 cursor-pointer hover:bg-gray-50 transition-colors" onClick={()=>setDetailSession(s)}>
                   <div className="text-sm font-semibold">{fmtDate(s.date)} · {s.time} Uhr</div>
                   <div className="text-xs text-gray-400">{s.duration} Min{s.location?' · '+s.location:''}</div>
+                  {s.cancellationDeadline && <div className="text-[10px] text-amber-600 mt-0.5">⏰ Abmeldefrist: {fmtDate(s.cancellationDeadline)}</div>}
                   {s.notes&&<p className="text-xs text-gray-500 mt-1 line-clamp-2">{s.notes}</p>}
                   <div className="text-[10px] text-gray-400 mt-1.5">📎 Tippen für Details & Anhänge</div>
                 </div>
-                <div className="flex gap-2 px-4 pb-3" onClick={e=>e.stopPropagation()}>
-                  {[
-                    {st:'attend',icon:'✓',label:'Zusagen',on:'bg-red-600 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-700'},
-                    {st:'cancel',icon:'✕',label:'Absagen',on:'bg-red-500 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600'},
-                    {st:'unsure',icon:'?', label:'Unsicher',on:'bg-amber-500 text-white shadow-sm',off:'bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-600'},
-                  ].map(({st,icon,label,on,off})=>(
-                    <button key={st} onClick={()=>setStatus(s.id,st)}
-                      className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-xl font-bold transition-all ${attendance[s.id]===st?on:off}`}>
-                      <span className="text-lg leading-none">{icon}</span>
-                      <span className="text-[10px] font-medium">{label}</span>
-                    </button>
-                  ))}
+                {/* Proforma: Spieler sind automatisch zugesagt — nur abmelden nötig */}
+                <div className="flex items-center gap-2 px-4 pb-3" onClick={e=>e.stopPropagation()}>
+                  {(() => {
+                    const st = attendance[s.id];
+                    const deadlinePassed = s.cancellationDeadline && todayStr() > s.cancellationDeadline;
+                    if (st==='no') {
+                      return <>
+                        <span className="text-xs font-semibold text-red-600">❌ Abgemeldet</span>
+                        <button onClick={()=>setStatus(s.id,'yes')}
+                          className="ml-auto px-4 py-2 rounded-xl bg-green-600 text-white text-xs font-bold hover:bg-green-700 transition-colors">
+                          ✓ Wieder anmelden
+                        </button>
+                      </>;
+                    }
+                    return <>
+                      <span className="text-xs font-semibold text-green-600">✅ Zugesagt</span>
+                      {deadlinePassed
+                        ? <span className="ml-auto text-[10px] text-gray-400 italic">Abmeldefrist abgelaufen</span>
+                        : <button onClick={()=>setStatus(s.id,'no')}
+                            className="ml-auto px-4 py-2 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 text-xs font-bold transition-colors">
+                            Abmelden
+                          </button>
+                      }
+                    </>;
+                  })()}
                 </div>
               </div>
             ))}
@@ -4249,7 +4317,7 @@ function AdminTrainer({show}) {
   const [editTeams,   setEditTeams]   = useState(null);
   const [editRole,    setEditRole]    = useState(null);
   const [delTrainer,  setDelTrainer]  = useState(null); // {id, name}
-  const [form,        setForm]        = useState({name:'',email:'',pw:'',teamId:''});
+  const [form,        setForm]        = useState({vorname:'',nachname:'',email:'',pw:'',teamId:''});
   const [loading,     setLoading]     = useState(false);
   const [selRole,     setSelRole]     = useState('');
 
@@ -4271,14 +4339,15 @@ function AdminTrainer({show}) {
   const add = async (e) => {
     e.preventDefault(); setLoading(true);
     try {
+      const trainerName = (form.vorname.trim() + ' ' + form.nachname.trim()).trim();
       await col('users').add({
-        name: form.name.trim(), role:'trainer',
+        name: trainerName, role:'trainer',
         teamId: form.teamId, trainerTeamId: form.teamId,
         trainerTeamIds: form.teamId ? [form.teamId] : [],
         status:'active', color:randColor(),
         claimed:false, uid:'', email:'', createdAt:ts()
       });
-      show('Trainer angelegt ✅'); setForm({name:'',teamId:''}); setOpen(false);
+      show('Trainer angelegt ✅'); setForm({vorname:'',nachname:'',teamId:''}); setOpen(false);
     } catch(err) { show(err.message,'error'); }
     setLoading(false);
   };
@@ -4373,14 +4442,17 @@ function AdminTrainer({show}) {
             ℹ️ Name eintragen — der Trainer registriert sich selbst und sucht dann seinen Namen.
           </p>
           <form onSubmit={add}>
-            <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Max Mustermann" required/>
+            <div className="flex gap-2">
+              <Inp label="Vorname" value={form.vorname} onChange={e=>setForm({...form,vorname:e.target.value})} placeholder="Max" required/>
+              <Inp label="Nachname" value={form.nachname} onChange={e=>setForm({...form,nachname:e.target.value})} placeholder="Mustermann" required/>
+            </div>
             <Sel label="Team" value={form.teamId} onChange={e=>setForm({...form,teamId:e.target.value})} required>
               <option value="">Team wählen…</option>
               {teams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
             </Sel>
             <div className="flex gap-2 mt-1">
               <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn>
-              <Btn type="submit" variant="purple" className="flex-1" disabled={loading||!form.name.trim()||!form.teamId}>{loading?'…':'Anlegen'}</Btn>
+              <Btn type="submit" variant="purple" className="flex-1" disabled={loading||!form.vorname.trim()||!form.nachname.trim()||!form.teamId}>{loading?'…':'Anlegen'}</Btn>
             </div>
           </form>
         </Modal>
@@ -6482,7 +6554,7 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
   const [addOpen,    setAddOpen]    = useState(false);
   const [delId,      setDelId]      = useState(null);
   const [saving,     setSaving]     = useState(false);
-  const EMPTY_FORM = {name:'',positions:[],number:'',dob:'',mitgliedStatus:'mitglied',anmeldungStatus:'offen'};
+  const EMPTY_FORM = {vorname:'',nachname:'',positions:[],number:'',dob:'',mitgliedStatus:'mitglied',anmeldungStatus:'offen',vereinsmitglied:false,spielrecht:false};
   const [form, setForm] = useState(EMPTY_FORM);
   const [playerSort, setPlayerSort] = useState('lastname'); // 'lastname' | 'firstname' | 'position' | 'number'
 
@@ -6508,11 +6580,13 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
       const positions = (form.positions||[]).length ? form.positions : ['offen'];
       // If Neuanmeldung + erledigt → auto-set to Mitglied
       const mitgliedStatus = (form.mitgliedStatus==='neuanmeldung' && form.anmeldungStatus==='erledigt') ? 'mitglied' : form.mitgliedStatus;
+      const fullName = (form.vorname.trim() + ' ' + form.nachname.trim()).trim();
       await col('users').add({
-        name: form.name.trim(), role:'player',
+        name: fullName, role:'player',
         teamId: selTeam, positions, position: positions[0],
         number: form.number, dob: form.dob,
         mitgliedStatus, anmeldungStatus: form.mitgliedStatus==='neuanmeldung' ? form.anmeldungStatus : '',
+        vereinsmitglied: form.vereinsmitglied||false, spielrecht: form.spielrecht||false,
         color: randColor(), claimed: false, uid:'', email:'', createdAt: ts()
       });
       show('Spieler hinzugefügt ✅'); setForm(EMPTY_FORM); setAddOpen(false);
@@ -6543,7 +6617,10 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
             ℹ️ Der Spieler erhält einen Slot und kann sich dann selbst registrieren und verknüpfen.
           </p>
           <form onSubmit={addPlayer}>
-            <Inp label="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Max Mustermann" required/>
+            <div className="flex gap-2">
+              <Inp label="Vorname" value={form.vorname} onChange={e=>setForm({...form,vorname:e.target.value})} placeholder="Max" required/>
+              <Inp label="Nachname" value={form.nachname} onChange={e=>setForm({...form,nachname:e.target.value})} placeholder="Mustermann" required/>
+            </div>
             <Inp label="Geburtsdatum" type="date" value={form.dob} onChange={e=>setForm({...form,dob:e.target.value})}/>
             <div className="mb-3">
               <label className="block text-xs font-medium text-gray-600 mb-1.5">Position(en)</label>
@@ -6586,6 +6663,20 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
                 {form.anmeldungStatus==='erledigt' && <div className="text-[10px] text-green-600 mt-1.5">✓ Wird automatisch als Mitglied eingetragen.</div>}
               </div>
             )}
+            {/* Vereinsmitglied & Spielrecht */}
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Mitgliedschaft & Spielrecht</label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-xl border-2 transition-all ${form.vereinsmitglied?'border-green-500 bg-green-50':'border-gray-200 hover:border-gray-300'}`}>
+                  <input type="checkbox" checked={form.vereinsmitglied} onChange={e=>setForm(f=>({...f,vereinsmitglied:e.target.checked}))} className="accent-green-600 w-4 h-4"/>
+                  <span className="text-xs font-semibold text-gray-700">Vereinsmitglied</span>
+                </label>
+                <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-xl border-2 transition-all ${form.spielrecht?'border-green-500 bg-green-50':'border-gray-200 hover:border-gray-300'}`}>
+                  <input type="checkbox" checked={form.spielrecht} onChange={e=>setForm(f=>({...f,spielrecht:e.target.checked}))} className="accent-green-600 w-4 h-4"/>
+                  <span className="text-xs font-semibold text-gray-700">Spielrecht</span>
+                </label>
+              </div>
+            </div>
             <div className="flex gap-2 mt-1">
               <button type="button" className="flex-1 py-2 rounded-lg border text-sm" onClick={()=>{setAddOpen(false);setForm(EMPTY_FORM);}}>Abbrechen</button>
               <button type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold disabled:opacity-40">{saving?'…':'Hinzufügen'}</button>
@@ -6648,7 +6739,12 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
               className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 cursor-pointer hover:border-red-200 hover:bg-red-50/30 transition-colors">
               <Avatar name={p.name} color={p.color} size="md8" photo={p.photoUrl} number={p.number}/>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium truncate">{p.name}</div>
+                <div className="text-sm font-medium truncate flex items-center gap-1.5">
+                  <span className="truncate">{p.name}</span>
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 inline-block"
+                    style={{background:(p.vereinsmitglied&&p.spielrecht)?'#22c55e':'#ef4444'}}
+                    title={(p.vereinsmitglied&&p.spielrecht)?'Vereinsmitglied & Spielrecht ✓':(!p.vereinsmitglied&&!p.spielrecht)?'Kein Vereinsmitglied · Kein Spielrecht':!p.vereinsmitglied?'Kein Vereinsmitglied':'Kein Spielrecht'}/>
+                </div>
                 <div className="text-xs text-gray-400 truncate">
                   {p.dob && <span>{fmtDob(p.dob)} · {fmtAge(p.dob)} J. · </span>}
                   {p.position}
@@ -6671,6 +6767,8 @@ function AdminSpielerVerwaltung({profile: adminProfile, show}) {
 function AdminPlayerDetail({player, onClose, show}) {
   const [notizen,        setNotizen]        = useState(player.vorstandNotizen||'');
   const [vereinsarbeit,  setVereinsarbeit]  = useState(player.vereinsarbeit||false);
+  const [vereinsmitglied,setVereinsmitglied]= useState(player.vereinsmitglied||false);
+  const [spielrecht,     setSpielrecht]     = useState(player.spielrecht||false);
   const [mitgliedStatus, setMitgliedStatus] = useState(player.mitgliedStatus||'mitglied');
   const [anmeldungStatus,setAnmeldungStatus]= useState(player.anmeldungStatus||'offen');
   const [saving,         setSaving]         = useState(false);
@@ -6694,7 +6792,7 @@ function AdminPlayerDetail({player, onClose, show}) {
     // Auto-set to Mitglied if Neuanmeldung erledigt
     const finalStatus = (mitgliedStatus==='neuanmeldung' && anmeldungStatus==='erledigt') ? 'mitglied' : mitgliedStatus;
     await col('users').doc(player.id).update({
-      vorstandNotizen: notizen, vereinsarbeit,
+      vorstandNotizen: notizen, vereinsarbeit, vereinsmitglied, spielrecht,
       mitgliedStatus: finalStatus,
       anmeldungStatus: finalStatus==='mitglied' ? '' : anmeldungStatus,
     });
@@ -6790,6 +6888,22 @@ function AdminPlayerDetail({player, onClose, show}) {
 
         {/* Mitgliedsstatus */}
         <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="text-xs font-semibold text-gray-600">Mitgliedschaft & Spielrecht</div>
+            <span className="w-2.5 h-2.5 rounded-full inline-block"
+              style={{background:(vereinsmitglied&&spielrecht)?'#22c55e':'#ef4444'}}
+              title={(vereinsmitglied&&spielrecht)?'Alles vollständig':'Unvollständig'}/>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-xl border-2 transition-all ${vereinsmitglied?'border-green-500 bg-green-50':'border-gray-200 hover:border-gray-300'}`}>
+              <input type="checkbox" checked={vereinsmitglied} onChange={e=>setVereinsmitglied(e.target.checked)} className="accent-green-600 w-4 h-4"/>
+              <span className="text-xs font-semibold text-gray-700">Vereinsmitglied</span>
+            </label>
+            <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-xl border-2 transition-all ${spielrecht?'border-green-500 bg-green-50':'border-gray-200 hover:border-gray-300'}`}>
+              <input type="checkbox" checked={spielrecht} onChange={e=>setSpielrecht(e.target.checked)} className="accent-green-600 w-4 h-4"/>
+              <span className="text-xs font-semibold text-gray-700">Spielrecht</span>
+            </label>
+          </div>
           <div className="text-xs font-semibold text-gray-600 mb-2">Mitgliedsstatus</div>
           <div className="grid grid-cols-2 gap-2 mb-2">
             {[['mitglied','Mitglied','🟢'],['neuanmeldung','Neuanmeldung','🔵']].map(([v,l,e])=>(
