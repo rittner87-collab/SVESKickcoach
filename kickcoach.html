@@ -6831,6 +6831,7 @@ function AdminPlayerDetail({player, onClose, show}) {
   const [spielStatus,    setSpielStatus]    = useState(player.spielStatus||'spielberechtigt');
   const [vereinsmitglied,setVereinsmitglied]= useState(player.vereinsmitglied||false);
   const [zweitspielrecht,setZweitspielrecht]= useState(player.zweitspielrecht||false);
+  const [checklist,      setChecklist]      = useState(player.checklist||{mga:false,spbe:false,foto:false,geburk:false,intfg:false,auw:false,mebe:false});
   const [saving,         setSaving]         = useState(false);
   const [uploadLabel,  setUploadLabel]  = useState('');
   const [uploading,    setUploading]    = useState(false);
@@ -6856,6 +6857,7 @@ function AdminPlayerDetail({player, onClose, show}) {
       positions: editPositions, position: editPositions[0]||'',
       vorstandNotizen: notizen, vereinsarbeit,
       spielStatus, vereinsmitglied, zweitspielrecht,
+      checklist,
     });
     show('Gespeichert ✅'); setSaving(false); onClose();
   };
@@ -6997,8 +6999,40 @@ function AdminPlayerDetail({player, onClose, show}) {
               </button>
             </div>
           </div>
+          {/* Checkliste "In Bearbeitung" */}
+          {spielStatus==='in_bearbeitung' && (
+            <div className="mt-3 bg-red-50 border border-red-200 rounded-xl p-3">
+              <div className="text-[10px] text-red-600 font-semibold uppercase tracking-wider mb-2">📋 Checkliste – ausstehende Unterlagen</div>
+              <div className="mb-1.5">
+                <div className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Pflicht</div>
+                <div className="grid grid-cols-2 gap-1">
+                  {[['mga','MGA'],['spbe','SpBe'],['foto','Foto'],['geburk','GebUrk']].map(([key,label])=>(
+                    <label key={key} className={`flex items-center gap-2 cursor-pointer px-2.5 py-1.5 rounded-lg border transition-all ${checklist[key]?'bg-green-50 border-green-300':'bg-white border-gray-200 hover:border-red-300'}`}>
+                      <input type="checkbox" checked={!!checklist[key]}
+                        onChange={e=>setChecklist({...checklist,[key]:e.target.checked})}
+                        className="accent-green-600 w-3.5 h-3.5 flex-shrink-0"/>
+                      <span className={`text-xs font-semibold ${checklist[key]?'text-green-700 line-through':'text-gray-700'}`}>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Optional</div>
+                <div className="grid grid-cols-3 gap-1">
+                  {[['intfg','IntFG'],['auw','Auw'],['mebe','MeBe']].map(([key,label])=>(
+                    <label key={key} className={`flex items-center gap-2 cursor-pointer px-2.5 py-1.5 rounded-lg border transition-all ${checklist[key]?'bg-green-50 border-green-300':'bg-white border-gray-200 hover:border-gray-300'}`}>
+                      <input type="checkbox" checked={!!checklist[key]}
+                        onChange={e=>setChecklist({...checklist,[key]:e.target.checked})}
+                        className="accent-green-600 w-3.5 h-3.5 flex-shrink-0"/>
+                      <span className={`text-xs font-semibold ${checklist[key]?'text-green-700 line-through':'text-gray-500'}`}>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           {/* Mitgliedschaft */}
-          <div>
+          <div className="mt-3">
             <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider mb-1.5">Mitgliedschaft</div>
             <div className="grid grid-cols-2 gap-2">
               <label className={`flex items-center gap-2 cursor-pointer p-2.5 rounded-xl border-2 transition-all ${vereinsmitglied?'border-green-500 bg-green-50':'border-gray-200 hover:border-gray-300'}`}>
