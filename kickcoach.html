@@ -3506,7 +3506,7 @@ function TrainerApp({profile}) {
   const nav = [
     {section:'Team',    items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'},{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Training',items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
-    {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+    {section:'Spieler', items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'abwesenheiten',icon:'🏖️',label:'Geplante Abwesenheiten'},{id:'chat',icon:'💬',label:'Teamchat'}]},
     {section:'Verein',  items:[{id:'busplanung',icon:'🚌',label:'Busplanung'},{id:'containerplanung',icon:'📦',label:'Containerplanung'},{id:'kalender',icon:'📆',label:'Vereinskalender'},{id:'platz',icon:'🏟️',label:'Platzverwaltung'},{id:'dokumente',icon:'📁',label:'Dokumente'},{id:'vorstand',icon:'✉️',label:'An Vorstand'},{id:'pinnwand',icon:'📌',label:'Pinnwand'}]},
     {section:'Konto',   items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
@@ -3540,6 +3540,7 @@ function TrainerApp({profile}) {
     uebungen:      <UebungenDB profile={profile} show={show}/>,
     verletzungen:  <><TeamSwitcher/><TrainerVerletzungen  key={activeTeamId} profile={activeProfile} show={show}/></>,
     beurteilungen: <><TeamSwitcher/><TrainerBeurteilungen key={activeTeamId} profile={activeProfile} show={show}/></>,
+    abwesenheiten: <><TeamSwitcher/><TrainerAbwesenheiten key={activeTeamId} profile={activeProfile}/></>,
     chat:          <><TeamSwitcher/><ChatPage             key={activeTeamId} profile={activeProfile} accent="red"/></>,
     busplanung:         <TrainerBusplanung profile={activeProfile} show={show}/>,
     containerplanung:   <TrainerContainerplanung profile={activeProfile} show={show}/>,
@@ -3566,28 +3567,35 @@ function TrainerApp({profile}) {
 // ═══════════════════════════════════════════════════════════════════
 function PlayerTraining({profile}) {
   const [sessions,   setSessions]   = useState([]);
-  const [attendance, setAttendance] = useState({});
+  const [attendance, setAttendance] = useState({}); // sessionId → {status, reason}
+  const [absences,   setAbsences]   = useState([]);
   const [detailSession, setDetailSession] = useState(null);
 
+  // Urlaub-Check: ist das Datum in einer Abwesenheit?
+  const getAbsence = (date) => absences.find(a=>date>=a.from&&date<=a.to)||null;
+
   useEffect(()=>{
-    return col('sessions').where('teamId','==',profile.teamId)
+    const u1 = col('sessions').where('teamId','==',profile.teamId)
       .onSnapshot(async s=>{
         const sess=s.docs.map(d=>({id:d.id,...d.data()}));
         setSessions(sess);
         const att={};
         await Promise.all(sess.filter(x=>x.date>=todayStr()).map(async s=>{
           const snap=await col('attendance').where('sessionId','==',s.id).where('userId','==',profile.id).limit(1).get();
-          att[s.id]=snap.empty?null:snap.docs[0].data().status;
+          att[s.id]=snap.empty?null:{status:snap.docs[0].data().status, reason:snap.docs[0].data().reason||''};
         }));
         setAttendance(att);
       });
+    const u2 = col('abwesenheiten').where('userId','==',profile.id)
+      .onSnapshot(s=>setAbsences(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();};
   },[]);
 
   const setStatus = async (sessionId, status) => {
     const existing=await col('attendance').where('sessionId','==',sessionId).where('userId','==',profile.id).limit(1).get();
-    if(existing.empty) await col('attendance').add({sessionId,userId:profile.id,playerName:profile.name,status,teamId:profile.teamId,updatedAt:ts()});
-    else await existing.docs[0].ref.update({status,updatedAt:ts()});
-    setAttendance(a=>({...a,[sessionId]:status}));
+    if(existing.empty) await col('attendance').add({sessionId,userId:profile.id,playerName:profile.name,status,reason:'',teamId:profile.teamId,updatedAt:ts()});
+    else await existing.docs[0].ref.update({status,reason:'',updatedAt:ts()});
+    setAttendance(a=>({...a,[sessionId]:{status,reason:''}}));
   };
 
   const upcoming = sessions.filter(s=>s.date>=todayStr());
@@ -3626,8 +3634,20 @@ function PlayerTraining({profile}) {
                 {/* Proforma: Spieler sind automatisch zugesagt — nur abmelden nötig */}
                 <div className="flex items-center gap-2 px-4 pb-3" onClick={e=>e.stopPropagation()}>
                   {(() => {
-                    const st = attendance[s.id];
+                    const att = attendance[s.id];
+                    const st  = att?.status || att; // backward compat (old: string)
                     const deadlinePassed = isDeadlinePassed(s);
+                    const absence = getAbsence(s.date);
+                    if (absence || (st==='no' && att?.reason==='Urlaub')) {
+                      const label = absence?.reason || att?.reason || 'Urlaub';
+                      return <>
+                        <span className="text-xs font-semibold text-amber-600">🏖️ {label}</span>
+                        <button onClick={()=>setStatus(s.id,'yes')}
+                          className="ml-auto px-3 py-1.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-green-50 hover:text-green-700 text-xs font-bold transition-colors">
+                          Trotzdem anmelden
+                        </button>
+                      </>;
+                    }
                     if (st==='no') {
                       return <>
                         <span className="text-xs font-semibold text-red-600">❌ Abgemeldet</span>
@@ -3671,10 +3691,13 @@ function PlayerTraining({profile}) {
 // ═══════════════════════════════════════════════════════════════════
 function PlayerSpiele({profile}) {
   const [games,     setGames]     = useState([]);
-  const [myRsvp,    setMyRsvp]    = useState({}); // gameId → {status, mitfahrt}
+  const [myRsvp,    setMyRsvp]    = useState({}); // gameId → {status, mitfahrt, reason, docId}
   const [myRatings, setMyRatings] = useState({}); // gameId → rating doc
+  const [absences,  setAbsences]  = useState([]);
   const [saving,    setSaving]    = useState({});
   const [detailRating, setDetailRating] = useState(null);
+
+  const getAbsence = (date) => absences.find(a=>date>=a.from&&date<=a.to)||null;
 
   useEffect(()=>{
     const u1 = col('games').where('teamId','==',profile.teamId)
@@ -3682,7 +3705,7 @@ function PlayerSpiele({profile}) {
     const u2 = col('gameAttendance').where('teamId','==',profile.teamId).where('userId','==',profile.id)
       .onSnapshot(s=>{
         const map={};
-        s.docs.forEach(d=>{const r=d.data(); map[r.gameId]={status:r.status,mitfahrt:r.mitfahrt,docId:d.id};});
+        s.docs.forEach(d=>{const r=d.data(); map[r.gameId]={status:r.status,mitfahrt:r.mitfahrt,reason:r.reason||'',docId:d.id};});
         setMyRsvp(map);
       });
     // Trainer-Feedback für diesen Spieler laden (kein Composite-Index nötig)
@@ -3692,7 +3715,9 @@ function PlayerSpiele({profile}) {
         s.docs.forEach(d=>{const r={id:d.id,...d.data()}; if(r.type==='game'&&r.gameId) map[r.gameId]=r;});
         setMyRatings(map);
       });
-    return ()=>{u1();u2();u3();};
+    const u4 = col('abwesenheiten').where('userId','==',profile.id)
+      .onSnapshot(s=>setAbsences(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return ()=>{u1();u2();u3();u4();};
   },[]);
 
   const saveRsvp = async (gameId, patch) => {
@@ -3709,9 +3734,16 @@ function PlayerSpiele({profile}) {
   const past     = games.filter(g=>g.date<todayStr());
 
   const GameRsvpCard = ({g}) => {
-    const rsvp = myRsvp[g.id]||{};
+    const rsvp    = myRsvp[g.id]||{};
+    const absence = getAbsence(g.date);
+    const isUrlaub = absence || (rsvp.status==='no' && rsvp.reason==='Urlaub');
     return (
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
+      <div className={`bg-white border rounded-xl p-4 ${isUrlaub?'border-amber-200':'border-gray-200'}`}>
+        {isUrlaub && (
+          <div className="mb-2 flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 text-xs text-amber-700 font-semibold">
+            🏖️ {absence?.reason || rsvp.reason || 'Urlaub'} – du bist für dieses Spiel abgemeldet
+          </div>
+        )}
         <div className="mb-3">
           <div className="flex items-center gap-2 mb-1">
             <span className="font-semibold text-sm">vs. {g.opponent}</span>
@@ -3732,19 +3764,26 @@ function PlayerSpiele({profile}) {
         {/* RSVP */}
         <div className="mb-3">
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Deine Rückmeldung</div>
-          <div className="flex gap-2">
-            {[
-              {st:'yes',   icon:'✓', label:'Zusagen', on:'bg-green-600 text-white', off:'bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-700'},
-              {st:'no',    icon:'✕', label:'Absagen',  on:'bg-red-600 text-white',   off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600'},
-              {st:'maybe', icon:'?', label:'Unsicher', on:'bg-amber-500 text-white', off:'bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-600'},
-            ].map(({st,icon,label,on,off})=>(
-              <button key={st} disabled={saving[g.id]} onClick={()=>saveRsvp(g.id,{status:st})}
-                className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-xl font-bold transition-all ${rsvp.status===st?on:off}`}>
-                <span className="text-lg leading-none">{icon}</span>
-                <span className="text-[10px] font-medium">{label}</span>
-              </button>
-            ))}
-          </div>
+          {isUrlaub ? (
+            <button disabled={saving[g.id]} onClick={()=>saveRsvp(g.id,{status:'yes',reason:''})}
+              className="w-full py-2 rounded-xl bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-700 text-xs font-semibold transition-colors">
+              ✓ Trotzdem zusagen (Urlaub überschreiben)
+            </button>
+          ) : (
+            <div className="flex gap-2">
+              {[
+                {st:'yes',   icon:'✓', label:'Zusagen', on:'bg-green-600 text-white', off:'bg-gray-100 text-gray-500 hover:bg-green-50 hover:text-green-700'},
+                {st:'no',    icon:'✕', label:'Absagen',  on:'bg-red-600 text-white',   off:'bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600'},
+                {st:'maybe', icon:'?', label:'Unsicher', on:'bg-amber-500 text-white', off:'bg-gray-100 text-gray-500 hover:bg-amber-50 hover:text-amber-600'},
+              ].map(({st,icon,label,on,off})=>(
+                <button key={st} disabled={saving[g.id]} onClick={()=>saveRsvp(g.id,{status:st,reason:''})}
+                  className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 rounded-xl font-bold transition-all ${rsvp.status===st?on:off}`}>
+                  <span className="text-lg leading-none">{icon}</span>
+                  <span className="text-[10px] font-medium">{label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {/* Mitfahrgelegenheit */}
         <div className="border-t border-gray-100 pt-3">
@@ -3854,6 +3893,197 @@ function PlayerSpiele({profile}) {
               <Btn className="w-full" onClick={()=>setDetailRating(null)}>Schließen</Btn>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SPIELER — ABWESENHEITEN (Urlaub etc.)
+// ═══════════════════════════════════════════════════════════════════
+function PlayerAbwesenheiten({profile}) {
+  const [absences, setAbsences] = useState([]);
+  const [open, setOpen]         = useState(false);
+  const [form, setForm]         = useState({from:'', to:'', reason:'Urlaub'});
+  const [saving, setSaving]     = useState(false);
+  const {show, Container}       = useToast();
+
+  useEffect(()=>{
+    return col('abwesenheiten').where('userId','==',profile.id)
+      .onSnapshot(s=>setAbsences(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.from.localeCompare(b.from))));
+  },[]);
+
+  const save = async (e) => {
+    e.preventDefault();
+    if(form.from > form.to){ show('Von-Datum muss vor Bis-Datum liegen ❌'); return; }
+    setSaving(true);
+    try {
+      // 1. Abwesenheit speichern
+      await col('abwesenheiten').add({
+        userId:profile.id, playerName:profile.name, teamId:profile.teamId,
+        from:form.from, to:form.to, reason:form.reason||'Urlaub', createdAt:ts()
+      });
+      // 2. Alle Trainings im Zeitraum abmelden
+      const [sessSnap, gameSnap] = await Promise.all([
+        col('sessions').where('teamId','==',profile.teamId).get(),
+        col('games').where('teamId','==',profile.teamId).get(),
+      ]);
+      const inRange = d => d >= form.from && d <= form.to;
+      const sessions = sessSnap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.date&&inRange(s.date));
+      const games    = gameSnap.docs.map(d=>({id:d.id,...d.data()})).filter(g=>g.date&&inRange(g.date));
+      await Promise.all([
+        ...sessions.map(async s=>{
+          const ex = await col('attendance').where('sessionId','==',s.id).where('userId','==',profile.id).limit(1).get();
+          if(ex.empty) await col('attendance').add({sessionId:s.id,userId:profile.id,playerName:profile.name,status:'no',reason:'Urlaub',teamId:profile.teamId,updatedAt:ts()});
+          else         await ex.docs[0].ref.update({status:'no',reason:'Urlaub',updatedAt:ts()});
+        }),
+        ...games.map(async g=>{
+          const ex = await col('gameAttendance').where('gameId','==',g.id).where('userId','==',profile.id).limit(1).get();
+          if(ex.empty) await col('gameAttendance').add({gameId:g.id,userId:profile.id,playerName:profile.name,status:'no',reason:'Urlaub',teamId:profile.teamId,updatedAt:ts()});
+          else         await ex.docs[0].ref.update({status:'no',reason:'Urlaub',updatedAt:ts()});
+        }),
+      ]);
+      show(`Abwesenheit eingetragen ✅ – ${sessions.length} Training(s) und ${games.length} Spiel(e) abgemeldet`);
+      setOpen(false); setForm({from:'',to:'',reason:'Urlaub'});
+    } catch(err){ show('Fehler beim Speichern ❌'); console.error(err); }
+    setSaving(false);
+  };
+
+  const deleteAbsence = async (id) => {
+    if(!confirm('Abwesenheit löschen? Die Abmeldungen für Trainings/Spiele bleiben bestehen.')) return;
+    await col('abwesenheiten').doc(id).delete().catch(()=>{});
+    show('Abwesenheit gelöscht');
+  };
+
+  const upcoming = absences.filter(a=>a.to>=todayStr());
+  const past     = absences.filter(a=>a.to<todayStr());
+
+  return (
+    <div className="p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-lg font-bold text-white">Meine Abwesenheiten</h1>
+          <p className="text-xs text-gray-400">Urlaub, Krank, Sonstiges</p>
+        </div>
+        <button onClick={()=>setOpen(true)}
+          className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-colors">
+          + Eintragen
+        </button>
+      </div>
+
+      {open && (
+        <Modal title="🏖️ Abwesenheit eintragen" onClose={()=>setOpen(false)}>
+          <form onSubmit={save} className="space-y-3">
+            <Inp label="Von" type="date" value={form.from} onChange={e=>setForm({...form,from:e.target.value})} required/>
+            <Inp label="Bis" type="date" value={form.to}   onChange={e=>setForm({...form,to:e.target.value})}   required/>
+            <Inp label="Grund" value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})} placeholder="z.B. Urlaub, Krank …"/>
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-700">
+              Du wirst automatisch für alle Trainings und Spiele in diesem Zeitraum abgemeldet – mit dem Hinweis <b>"{form.reason||'Urlaub'}"</b>.
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Btn type="button" variant="secondary" className="flex-1" onClick={()=>setOpen(false)}>Abbrechen</Btn>
+              <Btn type="submit" variant="blue" className="flex-1" disabled={saving}>{saving?'Speichern…':'Speichern'}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {absences.length===0 ? (
+        <div className="text-center text-gray-400 py-16">
+          <div className="text-4xl mb-3">🏖️</div>
+          <p className="text-sm font-medium">Keine geplanten Abwesenheiten</p>
+          <p className="text-xs mt-1">Trage Urlaub ein, um automatisch abgemeldet zu werden.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {upcoming.length>0&&<>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Bevorstehend</div>
+            {upcoming.map(a=>(
+              <div key={a.id} className="bg-white border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold">🏖️ {a.reason||'Urlaub'}</div>
+                  <div className="text-xs text-gray-500">{fmtDate(a.from)} – {fmtDate(a.to)}</div>
+                  {a.from<=todayStr()&&a.to>=todayStr()&&<span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold">Läuft gerade</span>}
+                </div>
+                <button onClick={()=>deleteAbsence(a.id)} className="text-gray-300 hover:text-red-500 transition-colors text-lg leading-none">✕</button>
+              </div>
+            ))}
+          </>}
+          {past.length>0&&<>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mt-3">Vergangen</div>
+            {past.map(a=>(
+              <div key={a.id} className="bg-gray-50 border border-gray-100 rounded-xl p-3 flex items-center justify-between opacity-60">
+                <div>
+                  <div className="text-sm font-medium">🏖️ {a.reason||'Urlaub'}</div>
+                  <div className="text-xs text-gray-400">{fmtDate(a.from)} – {fmtDate(a.to)}</div>
+                </div>
+                <button onClick={()=>deleteAbsence(a.id)} className="text-gray-300 hover:text-red-400 transition-colors">✕</button>
+              </div>
+            ))}
+          </>}
+        </div>
+      )}
+      <Container/>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TRAINER — GEPLANTE ABWESENHEITEN
+// ═══════════════════════════════════════════════════════════════════
+function TrainerAbwesenheiten({profile}) {
+  const [absences, setAbsences] = useState([]);
+
+  useEffect(()=>{
+    return col('abwesenheiten').where('teamId','==',profile.teamId)
+      .onSnapshot(s=>{
+        const all = s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.from.localeCompare(b.from));
+        setAbsences(all);
+      });
+  },[profile.teamId]);
+
+  const upcoming = absences.filter(a=>a.to>=todayStr());
+  const past     = absences.filter(a=>a.to<todayStr());
+
+  return (
+    <div className="p-4">
+      <h1 className="text-lg font-bold text-white mb-1">Geplante Abwesenheiten</h1>
+      <p className="text-xs text-gray-400 mb-4">Urlaubsmeldungen deiner Spieler</p>
+
+      {absences.length===0 ? (
+        <div className="text-center text-gray-400 py-16">
+          <div className="text-4xl mb-3">🏖️</div>
+          <p className="text-sm">Keine geplanten Abwesenheiten.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {upcoming.length>0&&<>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Bevorstehend & Aktuell</div>
+            {upcoming.map(a=>(
+              <div key={a.id} className="bg-white border border-amber-200 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-semibold">{a.playerName}</div>
+                    <div className="text-xs text-gray-500">🏖️ {a.reason||'Urlaub'} &nbsp;·&nbsp; {fmtDate(a.from)} – {fmtDate(a.to)}</div>
+                  </div>
+                  {a.from<=todayStr()&&a.to>=todayStr()
+                    ? <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full font-semibold">Jetzt</span>
+                    : <span className="text-xs text-gray-400">{a.from}</span>
+                  }
+                </div>
+              </div>
+            ))}
+          </>}
+          {past.length>0&&<>
+            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mt-4">Vergangen</div>
+            {past.map(a=>(
+              <div key={a.id} className="bg-gray-50 border border-gray-100 rounded-xl p-3 opacity-60">
+                <div className="text-sm font-medium">{a.playerName}</div>
+                <div className="text-xs text-gray-400">🏖️ {a.reason||'Urlaub'} &nbsp;·&nbsp; {fmtDate(a.from)} – {fmtDate(a.to)}</div>
+              </div>
+            ))}
+          </>}
         </div>
       )}
     </div>
@@ -4284,27 +4514,29 @@ function PlayerApp({profile}) {
   const {show, Container} = useToast();
 
   const nav = [{section:'', items:[
-    {id:'training', icon:'📅',label:'Training'},
-    {id:'spiele',   icon:'🏆',label:'Spieltage'},
-    {id:'kasse',    icon:'💰',label:'Kasse'},
-    {id:'feedback', icon:'⭐',label:'Feedback'},
-    {id:'wellness', icon:'💪',label:'Wellness'},
-    {id:'stats',    icon:'📊',label:'Stats'},
-    {id:'chat',     icon:'💬',label:'Chat'},
-    {id:'news',     icon:'📢',label:'News'},
-    {id:'profil',   icon:'👤',label:'Profil'},
+    {id:'training',     icon:'📅',label:'Training'},
+    {id:'spiele',       icon:'🏆',label:'Spieltage'},
+    {id:'abwesenheiten',icon:'🏖️',label:'Abwesenheiten'},
+    {id:'kasse',        icon:'💰',label:'Kasse'},
+    {id:'feedback',     icon:'⭐',label:'Feedback'},
+    {id:'wellness',     icon:'💪',label:'Wellness'},
+    {id:'stats',        icon:'📊',label:'Stats'},
+    {id:'chat',         icon:'💬',label:'Chat'},
+    {id:'news',         icon:'📢',label:'News'},
+    {id:'profil',       icon:'👤',label:'Profil'},
   ]}];
 
   const content = {
-    training: <PlayerTraining profile={profile}/>,
-    spiele:   <PlayerSpiele profile={profile}/>,
-    feedback: <PlayerFeedback profile={profile}/>,
-    wellness: <PlayerWellness profile={profile}/>,
-    stats:    <PlayerStats profile={profile}/>,
-    chat:     <ChatPage profile={profile} accent="red"/>,
-    news:     <PlayerNews profile={profile}/>,
-    kasse:    <PlayerKasse profile={profile}/>,
-    profil:   <ProfilPage profile={profile}/>,
+    training:      <PlayerTraining profile={profile}/>,
+    spiele:        <PlayerSpiele profile={profile}/>,
+    abwesenheiten: <PlayerAbwesenheiten profile={profile}/>,
+    feedback:      <PlayerFeedback profile={profile}/>,
+    wellness:      <PlayerWellness profile={profile}/>,
+    stats:         <PlayerStats profile={profile}/>,
+    chat:          <ChatPage profile={profile} accent="red"/>,
+    news:          <PlayerNews profile={profile}/>,
+    kasse:         <PlayerKasse profile={profile}/>,
+    profil:        <ProfilPage profile={profile}/>,
   };
 
   return (
@@ -8510,18 +8742,19 @@ function DualApp({profile}) {
   const trainerNav = [
     {section:'Team',     items:[{id:'kader',icon:'👥',label:'Kader'},{id:'spiele',icon:'🏆',label:'Spiele'},{id:'kasse',icon:'💰',label:'Mannschaftskasse'}]},
     {section:'Training', items:[{id:'training',icon:'📅',label:'Trainingsplan'},{id:'taktikboard',icon:'🎨',label:'Taktikboard'},{id:'uebungen',icon:'📚',label:'Übungsdatenbank'},{id:'verletzungen',icon:'🩹',label:'Verletzungen'}]},
-    {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'chat',icon:'💬',label:'Teamchat'}]},
+    {section:'Spieler',  items:[{id:'beurteilungen',icon:'⭐',label:'Beurteilungen'},{id:'spielerstats',icon:'📊',label:'Spieler-Stats'},{id:'abwesenheiten',icon:'🏖️',label:'Geplante Abwesenheiten'},{id:'chat',icon:'💬',label:'Teamchat'}]},
     {section:'Konto',    items:[{id:'profil',icon:'👤',label:'Profil'}]},
   ];
   const playerNav = [{section:'', items:[
-    {id:'training', icon:'📅',label:'Training'},
-    {id:'kasse',    icon:'💰',label:'Kasse'},
-    {id:'feedback', icon:'⭐',label:'Feedback'},
-    {id:'wellness', icon:'💪',label:'Wellness'},
-    {id:'stats',    icon:'📊',label:'Stats'},
-    {id:'chat',     icon:'💬',label:'Chat'},
-    {id:'news',     icon:'📢',label:'News'},
-    {id:'profil',   icon:'👤',label:'Profil'},
+    {id:'training',      icon:'📅',label:'Training'},
+    {id:'abwesenheiten', icon:'🏖️',label:'Abwesenheiten'},
+    {id:'kasse',         icon:'💰',label:'Kasse'},
+    {id:'feedback',      icon:'⭐',label:'Feedback'},
+    {id:'wellness',      icon:'💪',label:'Wellness'},
+    {id:'stats',         icon:'📊',label:'Stats'},
+    {id:'chat',          icon:'💬',label:'Chat'},
+    {id:'news',          icon:'📢',label:'News'},
+    {id:'profil',        icon:'👤',label:'Profil'},
   ]}];
 
   const [page, setPage] = useState(mode==='trainer' ? 'kader' : 'training');
@@ -8544,19 +8777,21 @@ function DualApp({profile}) {
     verletzungen: <TrainerVerletzungen profile={trainerProfile} show={show}/>,
     beurteilungen: <TrainerBeurteilungen profile={trainerProfile} show={show}/>,
     spielerstats:  <TrainerSpielerStatistik profile={trainerProfile}/>,
+    abwesenheiten: <TrainerAbwesenheiten profile={trainerProfile}/>,
     kasse:         <TrainerKasse profile={trainerProfile} show={show}/>,
     chat: <ChatPage profile={trainerProfile}/>,
     profil: <ProfilPage profile={profile}/>,
   };
   const playerContent = {
-    training: <PlayerTraining profile={playerProfile}/>,
-    feedback: <PlayerFeedback profile={playerProfile}/>,
-    wellness: <PlayerWellness profile={playerProfile}/>,
-    stats: <PlayerStats profile={playerProfile}/>,
-    chat: <ChatPage profile={playerProfile}/>,
-    news: <PlayerNews/>,
-    kasse: <PlayerKasse profile={playerProfile}/>,
-    profil: <ProfilPage profile={profile}/>,
+    training:      <PlayerTraining profile={playerProfile}/>,
+    abwesenheiten: <PlayerAbwesenheiten profile={playerProfile}/>,
+    feedback:      <PlayerFeedback profile={playerProfile}/>,
+    wellness:      <PlayerWellness profile={playerProfile}/>,
+    stats:         <PlayerStats profile={playerProfile}/>,
+    chat:          <ChatPage profile={playerProfile}/>,
+    news:          <PlayerNews/>,
+    kasse:         <PlayerKasse profile={playerProfile}/>,
+    profil:        <ProfilPage profile={profile}/>,
   };
 
   // Umschalter wird oben in der Sidebar eingeblendet
