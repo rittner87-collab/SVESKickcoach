@@ -3598,8 +3598,8 @@ function PlayerTraining({profile}) {
     setAttendance(a=>({...a,[sessionId]:{status,reason:''}}));
   };
 
-  const upcoming = sessions.filter(s=>s.date>=todayStr());
-  const past     = sessions.filter(s=>s.date<todayStr());
+  const upcoming = sessions.filter(s=>s.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'').localeCompare(b.time||''));
+  const past     = sessions.filter(s=>s.date<todayStr()).sort((a,b)=>b.date.localeCompare(a.date)||(b.time||'').localeCompare(a.time||''));
 
   return (
     <div className="p-4">
@@ -3648,6 +3648,21 @@ function PlayerTraining({profile}) {
                         </button>
                       </>;
                     }
+                    if (st==='maybe') {
+                      return <>
+                        <span className="text-xs font-semibold text-amber-500">❓ Noch unsicher</span>
+                        {!deadlinePassed && <div className="ml-auto flex gap-1.5">
+                          <button onClick={()=>setStatus(s.id,'yes')}
+                            className="px-3 py-1.5 rounded-xl bg-green-100 text-green-700 hover:bg-green-600 hover:text-white text-xs font-bold transition-colors">
+                            ✓ Zusagen
+                          </button>
+                          <button onClick={()=>setStatus(s.id,'no')}
+                            className="px-3 py-1.5 rounded-xl bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-600 text-xs font-bold transition-colors">
+                            Abmelden
+                          </button>
+                        </div>}
+                      </>;
+                    }
                     if (st==='no') {
                       return <>
                         <span className="text-xs font-semibold text-red-600">❌ Abgemeldet</span>
@@ -3661,10 +3676,16 @@ function PlayerTraining({profile}) {
                       <span className="text-xs font-semibold text-green-600">✅ Zugesagt</span>
                       {deadlinePassed
                         ? <span className="ml-auto text-[10px] text-gray-400 italic">Abmeldefrist abgelaufen</span>
-                        : <button onClick={()=>setStatus(s.id,'no')}
-                            className="ml-auto px-4 py-2 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 text-xs font-bold transition-colors">
-                            Abmelden
-                          </button>
+                        : <div className="ml-auto flex gap-1.5">
+                            <button onClick={()=>setStatus(s.id,'maybe')}
+                              className="px-3 py-1.5 rounded-xl bg-amber-100 text-amber-600 hover:bg-amber-500 hover:text-white text-xs font-bold transition-colors">
+                              ❓ Noch unsicher
+                            </button>
+                            <button onClick={()=>setStatus(s.id,'no')}
+                              className="px-3 py-1.5 rounded-xl bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 text-xs font-bold transition-colors">
+                              Abmelden
+                            </button>
+                          </div>
                       }
                     </>;
                   })()}
@@ -3730,8 +3751,8 @@ function PlayerSpiele({profile}) {
     setSaving(v=>({...v,[gameId]:false}));
   };
 
-  const upcoming = games.filter(g=>g.date>=todayStr());
-  const past     = games.filter(g=>g.date<todayStr());
+  const upcoming = games.filter(g=>g.date>=todayStr()).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'').localeCompare(b.time||''));
+  const past     = games.filter(g=>g.date<todayStr()).sort((a,b)=>b.date.localeCompare(a.date)||(b.time||'').localeCompare(a.time||''));
 
   const GameRsvpCard = ({g}) => {
     const rsvp    = myRsvp[g.id]||{};
