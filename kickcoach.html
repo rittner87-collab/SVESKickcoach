@@ -301,7 +301,7 @@ const Avatar = ({name, color='#CC0000', size='md', photo=null, number=null}) => 
     lg:  'w-12 h-12 text-lg',
     xl:  'w-14 h-14 text-xl',
   }[size]||'w-9 h-9 text-sm';
-  if(photo) return <img src={photo} className={`${s} rounded-full object-cover flex-shrink-0`} alt={name}/>;
+  if(photo) return <img src={photo} className={`${s} rounded-full object-cover object-top flex-shrink-0`} alt={name}/>;
   return <div className={`${s} rounded-full flex items-center justify-center font-bold text-white flex-shrink-0`} style={{background:color||'#CC0000'}}>{number||initials(name)}</div>;
 };
 
@@ -694,7 +694,7 @@ function Layout({profile, nav, page, setPage, onLogout, accent='red', extraHeade
       <div className="px-4 pt-4 pb-3 flex items-center gap-3 flex-shrink-0">
         <div className="relative flex-shrink-0">
           {profile.photoUrl
-            ? <img src={profile.photoUrl} className="w-10 h-10 rounded-full object-cover ring-2 ring-red-600/60" alt={profile.name}/>
+            ? <img src={profile.photoUrl} className="w-10 h-10 rounded-full object-cover object-top ring-2 ring-red-600/60" alt={profile.name}/>
             : <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-black text-sm ring-2 ring-red-600/60 shadow-lg shadow-red-900/50"
                 style={{background:'linear-gradient(135deg,#cc0000,#880000)'}}>{initials(profile.name)}</div>
           }
