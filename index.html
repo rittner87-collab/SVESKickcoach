@@ -2368,7 +2368,7 @@ function TrainerSpiele({profile, show}) {
   const [gameSort,    setGameSort]    = useState('lastname'); // 'lastname' | 'firstname' | 'status'
 
   useEffect(()=>{
-    const u1=col('games').where('teamId','==',profile.teamId).onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.date?.localeCompare(a.date||''))));
+    const u1=col('games').where('teamId','==',profile.teamId).onSnapshot(s=>setGames(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=col('users').where('teamId','==',profile.teamId).onSnapshot(s=>setPlayers(s.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.role==='player'||p.role==='dual')));
     return ()=>{u1();u2();};
   },[]);
@@ -2457,8 +2457,8 @@ function TrainerSpiele({profile, show}) {
     return <div className={`text-xs font-bold px-2.5 py-1 rounded-full ${draw?'bg-gray-100 text-gray-600':won?'bg-green-100 text-green-700':'bg-red-100 text-red-600'}`}>{g.scoreHome}:{g.scoreAway} {draw?'U':won?'✓':'✗'}</div>;
   };
 
-  const upcoming = games.filter(g=>g.date>=todayStr());
-  const past     = games.filter(g=>g.date<todayStr());
+  const upcoming = games.filter(g=>g.date>=todayStr()).sort((a,b)=>a.date?.localeCompare(b.date||'')||(a.time||'').localeCompare(b.time||''));
+  const past     = games.filter(g=>g.date<todayStr()).sort((a,b)=>b.date?.localeCompare(a.date||'')||(b.time||'').localeCompare(a.time||''));
 
   return (
     <div className="p-4">
@@ -2683,6 +2683,33 @@ function TrainerSpiele({profile, show}) {
         <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">🏆</div><p className="text-sm">Noch keine Spiele eingetragen.</p></div>
       ) : (
         <div className="space-y-2">
+          {/* ── Nächstes Spiel Banner ── */}
+          {upcoming.length>0 && (()=>{const ng=upcoming[0]; const yes=gameRsvp.filter(r=>r.gameId===ng.id&&r.status==='yes').length; const no=gameRsvp.filter(r=>r.gameId===ng.id&&r.status==='no').length; return (
+            <div className="rounded-2xl overflow-hidden mb-4 cursor-pointer" onClick={()=>setDetailGame(ng)}
+              style={{background:'linear-gradient(135deg,#7f0000 0%,#cc0000 50%,#ff4444 100%)',boxShadow:'0 8px 32px rgba(204,0,0,0.4)'}}>
+              <div className="p-4">
+                <div className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{color:'rgba(255,255,255,0.6)'}}>⚽ Nächstes Spiel</div>
+                <div className="text-xl font-black text-white mb-0.5">vs. {ng.opponent}</div>
+                <div className="text-sm font-medium" style={{color:'rgba(255,255,255,0.8)'}}>{fmtDate(ng.date)} · {ng.time||'—'} Uhr · {ng.home?'🏠 Heim':'✈️ Auswärts'}</div>
+                {ng.location&&<div className="text-xs mt-0.5" style={{color:'rgba(255,255,255,0.6)'}}>📍 {ng.location}</div>}
+                {ng.treffzeit&&<div className="text-xs mt-0.5" style={{color:'rgba(255,255,255,0.6)'}}>🕐 Treffzeit: {ng.treffzeit} Uhr</div>}
+              </div>
+              <div className="flex border-t border-white/20">
+                <div className="flex-1 py-2.5 text-center">
+                  <div className="text-lg font-black text-white">{yes}</div>
+                  <div className="text-[10px] font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>Zusagen</div>
+                </div>
+                <div className="flex-1 py-2.5 text-center border-l border-white/20">
+                  <div className="text-lg font-black text-white">{no}</div>
+                  <div className="text-[10px] font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>Absagen</div>
+                </div>
+                <div className="flex-1 py-2.5 text-center border-l border-white/20">
+                  <div className="text-lg font-black text-white">{players.length - yes - no}</div>
+                  <div className="text-[10px] font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>Offen</div>
+                </div>
+              </div>
+            </div>
+          );})()}
           {upcoming.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
             {upcoming.map(g=><GameCard key={g.id} g={g} badge={badge} onEdit={openEdit} onDelete={()=>setDelGame(g.id)} onLineup={()=>setLineup(g)} onDetail={()=>setDetailGame(g)}/>)}</>}
           {past.length>0&&<><div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-4">Vergangen</div>
@@ -3412,6 +3439,9 @@ function TrainerKasse({profile, show}) {
   const [strafen,     setStrafen]     = useState([]);
   const [buch,        setBuch]        = useState([]);
   const [beitraege,   setBeitraege]   = useState([]);
+  const [kassenwartId,  setKassenwartId]  = useState('');
+  const [kassenwartOpen,setKassenwartOpen]=useState(false);
+  const [deleteBuchId,  setDeleteBuchId]  = useState(null); // Löschen-Bestätigung
 
   // Katalog-Formular
   const EK = {name:'', amount:'', description:''};
@@ -3443,7 +3473,9 @@ function TrainerKasse({profile, show}) {
       .onSnapshot(s=>setBuch(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>b.date?.localeCompare(a.date||''))));
     const u5 = col('beitraege').where('teamId','==',profile.teamId)
       .onSnapshot(s=>setBeitraege(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))));
-    return ()=>{u1();u2();u3();u4();u5();};
+    const u6 = col('kassenwart').doc(profile.teamId)
+      .onSnapshot(s=>setKassenwartId(s.exists ? (s.data().playerId||'') : ''));
+    return ()=>{u1();u2();u3();u4();u5();u6();};
   },[]);
 
   // Kassenstand berechnen
@@ -3514,9 +3546,24 @@ function TrainerKasse({profile, show}) {
     setBuchForm(EB); setBuchOpen(false);
   };
   const deleteBuch = async (id) => {
-    if(!window.confirm('Eintrag löschen?')) return;
     await col('kassenbuch').doc(id).delete();
-    show('Gelöscht');
+    setDeleteBuchId(null);
+    show('Gelöscht ✅');
+  };
+
+  const saveKassenwart = async (playerId) => {
+    try {
+      // Kassenwart in eigener Collection speichern (kein User-Doc-Write nötig)
+      await col('kassenwart').doc(profile.teamId).set({
+        playerId: playerId || '',
+        teamId:   profile.teamId,
+        updatedAt: ts(),
+      });
+      setKassenwartOpen(false);
+      show(playerId ? 'Kassenwart ernannt ✅' : 'Kassenwart entfernt ✅');
+    } catch(e) {
+      show('Fehler: ' + e.message);
+    }
   };
 
   // ── Beiträge / Spargeld ──────────────────────────────────────────
@@ -3551,7 +3598,47 @@ function TrainerKasse({profile, show}) {
 
   return (
     <div className="p-4">
-      <h1 className="text-lg font-bold text-white mb-3">💰 Mannschaftskasse</h1>
+      <div className="flex items-center justify-between mb-3">
+        <h1 className="text-lg font-bold text-white">💰 Mannschaftskasse</h1>
+        <button onClick={()=>setKassenwartOpen(true)}
+          className="text-[11px] px-3 py-1.5 rounded-xl font-semibold transition-all"
+          style={{background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,60,60,0.2)',color:'rgba(255,255,255,0.6)'}}>
+          🏦 {kassenwartId ? (players.find(p=>p.id===kassenwartId)?.name||'Kassenwart') : 'Kassenwart ernennen'}
+        </button>
+      </div>
+
+      {/* Kassenwart-Modal */}
+      {kassenwartOpen && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)',backdropFilter:'blur(6px)'}}>
+          <div className="absolute inset-0" onClick={()=>setKassenwartOpen(false)}/>
+          <div className="relative w-full max-w-sm rounded-3xl overflow-hidden" style={{background:'#1a0000',border:'1px solid rgba(255,60,60,0.25)',boxShadow:'0 25px 80px rgba(0,0,0,0.6)'}}>
+            <div style={{background:'linear-gradient(135deg,#cc0000,#880000)',padding:'18px 20px 14px'}}>
+              <div style={{fontSize:17,fontWeight:800,color:'#fff'}}>🏦 Kassenwart ernennen</div>
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.6)',marginTop:3}}>Dieser Spieler kann die Kasse wie ein Trainer verwalten</div>
+            </div>
+            <div style={{padding:'20px'}}>
+              <div className="space-y-2 max-h-64 overflow-y-auto mb-4">
+                {players.map(p=>(
+                  <button key={p.id} onClick={()=>saveKassenwart(p.id)}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all"
+                    style={{background: kassenwartId===p.id ? 'rgba(204,0,0,0.25)' : 'rgba(255,255,255,0.06)', border: kassenwartId===p.id ? '1px solid rgba(204,0,0,0.5)' : '1px solid rgba(255,255,255,0.08)'}}>
+                    <Avatar name={p.name} color={p.color} size="sm" photo={p.photoUrl}/>
+                    <span style={{fontSize:13,fontWeight:600,color:'#fff'}}>{p.name}</span>
+                    {kassenwartId===p.id && <span style={{marginLeft:'auto',fontSize:11,color:'#f87171',fontWeight:700}}>✓ Kassenwart</span>}
+                  </button>
+                ))}
+              </div>
+              {kassenwartId && (
+                <button onClick={()=>saveKassenwart('')}
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all"
+                  style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.4)'}}>
+                  Kassenwart entfernen
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab-Navigation */}
       <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-4">
@@ -3684,28 +3771,48 @@ function TrainerKasse({profile, show}) {
           )}
           {/* Bezahlte Strafen als Einnahmen */}
           {paid.map(s=>(
-            <div key={'s-'+s.id} className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center gap-2">
-              <div className="flex-1">
-                <div className="text-xs font-semibold text-green-800">Strafe: {s.playerName}</div>
-                <div className="text-[10px] text-green-600">{s.fineName}{s.note?' · '+s.note:''}</div>
+            <div key={'s-'+s.id} className="glass-card rounded-xl p-3 flex items-center gap-2">
+              <div className="w-1.5 h-8 rounded-full flex-shrink-0" style={{background:'#16a34a'}}/>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-white truncate">Strafe: {s.playerName}</div>
+                <div className="text-[10px]" style={{color:'rgba(255,255,255,0.4)'}}>{s.fineName}{s.note?' · '+s.note:''}</div>
               </div>
-              <div className="text-sm font-bold text-green-700">+{fmt(s.amount)}</div>
+              <div className="text-sm font-bold flex-shrink-0" style={{color:'#4ade80'}}>+{fmt(s.amount)}</div>
+              <button onClick={()=>togglePaid(s)}
+                className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg transition-all text-xs"
+                style={{background:'rgba(220,38,38,0.12)',border:'1px solid rgba(220,38,38,0.2)',color:'#f87171'}}
+                title="Als unbezahlt markieren (entfernt aus Kassenbuch)">↩</button>
             </div>
           ))}
           {/* Manuelle Kassenbuch-Einträge */}
           {buch.map(b=>(
-            <div key={b.id} className={`border rounded-xl p-3 flex items-center gap-2 ${b.type==='einnahme'?'bg-green-50 border-green-200':'bg-red-50 border-red-200'}`}>
-              <div className="flex-1">
-                <div className={`text-xs font-semibold ${b.type==='einnahme'?'text-green-800':'text-red-800'}`}>{b.description}</div>
-                <div className="text-[10px] text-gray-400">{fmtDate(b.date)}{b.addedBy?' · '+b.addedBy:''}</div>
+            <div key={b.id} className="glass-card rounded-xl p-3 flex items-center gap-2">
+              <div className="w-1.5 h-8 rounded-full flex-shrink-0" style={{background: b.type==='einnahme'?'#16a34a':'#dc2626'}}/>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-white truncate">{b.description}</div>
+                <div className="text-[10px]" style={{color:'rgba(255,255,255,0.4)'}}>{fmtDate(b.date)}{b.addedBy?' · '+b.addedBy:''}</div>
               </div>
-              <div className={`text-sm font-bold flex-shrink-0 ${b.type==='einnahme'?'text-green-700':'text-red-600'}`}>
+              <div className="text-sm font-bold flex-shrink-0" style={{color: b.type==='einnahme'?'#4ade80':'#f87171'}}>
                 {b.type==='einnahme'?'+':'-'}{fmt(b.amount)}
               </div>
-              <button onClick={()=>deleteBuch(b.id)} className="text-gray-300 hover:text-red-500 text-xs px-1">🗑</button>
+              <button onClick={()=>setDeleteBuchId(b.id)}
+                className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg transition-all text-xs"
+                style={{background:'rgba(220,38,38,0.12)',border:'1px solid rgba(220,38,38,0.2)',color:'#f87171'}}
+                title="Eintrag löschen">🗑</button>
             </div>
           ))}
         </div>
+      )}
+
+      {/* ── MODAL: Kassenbuch Löschen ── */}
+      {deleteBuchId && (
+        <Modal title="Eintrag löschen?" onClose={()=>setDeleteBuchId(null)}>
+          <p className="text-sm text-gray-600 mb-4">Diesen Kassenbuch-Eintrag wirklich löschen?</p>
+          <div className="flex gap-2">
+            <Btn variant="secondary" className="flex-1" onClick={()=>setDeleteBuchId(null)}>Abbrechen</Btn>
+            <Btn className="flex-1 bg-red-700" onClick={()=>deleteBuch(deleteBuchId)}>Löschen</Btn>
+          </div>
+        </Modal>
       )}
 
       {/* ── MODAL: Katalog ── */}
@@ -4504,6 +4611,39 @@ function PlayerSpiele({profile}) {
         <div className="text-center text-gray-400 py-16"><div className="text-4xl mb-2">🏆</div><p className="text-sm">Noch keine Spiele eingetragen.</p></div>
       ) : (
         <div className="space-y-2">
+          {/* ── Nächstes Spiel Banner ── */}
+          {upcoming.length>0 && (()=>{
+            const ng  = upcoming[0];
+            const rsvp = myRsvp[ng.id]||{};
+            const effectiveStatus = rsvp.status||'yes';
+            const statusColor = effectiveStatus==='yes'?'#4ade80':effectiveStatus==='no'?'#f87171':'#fbbf24';
+            const statusLabel = effectiveStatus==='yes'?'✓ Zugesagt':effectiveStatus==='no'?'✕ Abgesagt':'? Unsicher';
+            return (
+              <div className="rounded-2xl overflow-hidden mb-4"
+                style={{background:'linear-gradient(135deg,#7f0000 0%,#cc0000 50%,#ff4444 100%)',boxShadow:'0 8px 32px rgba(204,0,0,0.4)'}}>
+                <div className="p-4">
+                  <div className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{color:'rgba(255,255,255,0.6)'}}>⚽ Nächstes Spiel</div>
+                  <div className="text-xl font-black text-white mb-0.5">vs. {ng.opponent}</div>
+                  <div className="text-sm font-medium" style={{color:'rgba(255,255,255,0.8)'}}>{fmtDate(ng.date)} · {ng.time||'—'} Uhr · {ng.home?'🏠 Heim':'✈️ Auswärts'}</div>
+                  {ng.location&&<div className="text-xs mt-0.5" style={{color:'rgba(255,255,255,0.6)'}}>📍 {ng.location}</div>}
+                  {ng.treffzeit&&<div className="text-xs mt-0.5" style={{color:'rgba(255,255,255,0.6)'}}>🕐 Treffzeit: {ng.treffzeit} Uhr</div>}
+                </div>
+                <div className="flex items-center justify-between px-4 pb-4 pt-0 gap-2">
+                  <span className="text-xs font-bold px-3 py-1.5 rounded-full" style={{background:'rgba(0,0,0,0.25)',color:statusColor}}>
+                    {statusLabel}
+                  </span>
+                  <div className="flex gap-2">
+                    {effectiveStatus!=='yes'&&<button onClick={()=>saveRsvp(ng.id,{status:'yes',reason:''})}
+                      className="text-xs font-bold px-3 py-1.5 rounded-full transition-all"
+                      style={{background:'rgba(255,255,255,0.2)',color:'#fff'}}>✓ Zusagen</button>}
+                    {effectiveStatus!=='no'&&<button onClick={()=>openAbsage(ng.id)}
+                      className="text-xs font-bold px-3 py-1.5 rounded-full transition-all"
+                      style={{background:'rgba(0,0,0,0.25)',color:'rgba(255,255,255,0.8)'}}>✕ Absagen</button>}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           {upcoming.length>0&&<>
             <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bevorstehend</div>
             {upcoming.map(g=><GameRsvpCard key={g.id} g={g}/>)}
@@ -5206,6 +5346,11 @@ function PlayerNews({profile}) {
 function PlayerApp({profile}) {
   const [page, setPage] = useState('training');
   const {show, Container} = useToast();
+  const [isKassenwart, setIsKassenwart] = useState(false);
+  useEffect(()=>{
+    return col('kassenwart').doc(profile.teamId)
+      .onSnapshot(s=>setIsKassenwart(s.exists && s.data().playerId===profile.id));
+  },[]);
 
   const nav = [{section:'', items:[
     {id:'training',     icon:'📅',label:'Training'},
@@ -5229,7 +5374,7 @@ function PlayerApp({profile}) {
     stats:         <PlayerStats profile={profile}/>,
     chat:          <ChatPage profile={profile} accent="red"/>,
     news:          <PlayerNews profile={profile}/>,
-    kasse:         <PlayerKasse profile={profile}/>,
+    kasse:         isKassenwart ? <TrainerKasse profile={profile} show={show}/> : <PlayerKasse profile={profile}/>,
     profil:        <ProfilPage profile={profile}/>,
   };
 
@@ -10446,24 +10591,28 @@ function App() {
   const [noProfile, setNoProfile] = useState(false);
 
   useEffect(()=>{
-    return auth.onAuthStateChanged(async (user) => {
+    let unsub = null;
+    const unauth = auth.onAuthStateChanged((user) => {
+      if(unsub) { unsub(); unsub = null; }
       if (user) {
         setAuthUser(user);
-        const snap = await col('users').doc(user.uid).get();
-        if (snap.exists) {
-          setProfile({id:user.uid, ...snap.data()});
-          setNoProfile(false);
-        } else {
-          // Auth vorhanden, aber kein Firestore-Profil → Profil anlegen lassen
-          setProfile(null);
-          setNoProfile(true);
-        }
+        // Profil live hören — damit Kassenwart/Rolle-Änderungen sofort wirken
+        unsub = col('users').doc(user.uid).onSnapshot(snap => {
+          if (snap.exists) {
+            setProfile({id:user.uid, ...snap.data()});
+            setNoProfile(false);
+          } else {
+            setProfile(null);
+            setNoProfile(true);
+          }
+        });
       } else {
         setAuthUser(null);
         setProfile(null);
         setNoProfile(false);
       }
     });
+    return () => { if(unsub) unsub(); unauth(); };
   },[]);
 
   if (profile === undefined) return (
