@@ -9648,6 +9648,7 @@ function DualApp({profile}) {
   ];
   const playerNav = [{section:'', items:[
     {id:'training',      icon:'📅',label:'Training'},
+    {id:'spiele',        icon:'🏆',label:'Spieltage'},
     {id:'abwesenheiten', icon:'🏖️',label:'Abwesenheiten'},
     {id:'kasse',         icon:'💰',label:'Kasse'},
     {id:'feedback',      icon:'⭐',label:'Feedback'},
@@ -9687,6 +9688,7 @@ function DualApp({profile}) {
   };
   const playerContent = {
     training:      <PlayerTraining profile={playerProfile}/>,
+    spiele:        <PlayerSpiele profile={playerProfile}/>,
     abwesenheiten: <PlayerAbwesenheiten profile={playerProfile}/>,
     feedback:      <PlayerFeedback profile={playerProfile}/>,
     wellness:      <PlayerWellness profile={playerProfile}/>,
