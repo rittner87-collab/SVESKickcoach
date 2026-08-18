@@ -1364,12 +1364,18 @@ const SessionCard = ({s, drillMap, att, faded=false, totalPlayers=0, onDetail, o
           </div>
           <div className="text-xs text-gray-400 mt-0.5">{s.duration} Min{s.location?' · '+s.location:''}</div>
         </div>
-        {/* Zusagen-Badges (proforma: alle zugesagt außer explizit abgemeldet) */}
-        <div className="flex gap-1 flex-shrink-0">
-          {totalPlayers > 0 ? <>
-            <span className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ {totalPlayers-(att?.no||0)}</span>
-            {(att?.no||0)>0 && <span className="text-[11px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">❌ {att.no}</span>}
-          </> : null}
+        {/* Zusagen-Badges: yes / maybe / no / offen */}
+        <div className="flex gap-1 flex-shrink-0 flex-wrap justify-end">
+          {totalPlayers > 0 ? (()=>{
+            const yes=att?.yes||0, maybe=att?.maybe||0, no=att?.no||0;
+            const offen=totalPlayers-yes-maybe-no;
+            return <>
+              <span className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">✅ {yes}</span>
+              {maybe>0 && <span className="text-[11px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full font-medium">❓ {maybe}</span>}
+              {no>0 && <span className="text-[11px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">❌ {no}</span>}
+              {offen>0 && <span className="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">⏳ {offen}</span>}
+            </>;
+          })() : null}
         </div>
       </div>
       {fmtDeadlineLabel(s) && <div className="text-[10px] text-amber-600 mt-1">⏰ Abmeldefrist: {fmtDeadlineLabel(s)}</div>}
