@@ -8073,11 +8073,12 @@ function AdminPlayerDetail({player, onClose, show}) {
                 <div className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Pflicht</div>
                 <div className="grid grid-cols-2 gap-1">
                   {[['mga','MGA'],['spbe','SpBe'],['foto','Foto'],['geburk','GebUrk']].map(([key,label])=>(
-                    <label key={key} className={`flex items-center gap-2 cursor-pointer px-2.5 py-1.5 rounded-lg border transition-all ${checklist[key]?'bg-green-50 border-green-300':'bg-white border-gray-200 hover:border-red-300'}`}>
+                    <label key={key} className="flex items-center gap-2 cursor-pointer px-2.5 py-1.5 rounded-lg border transition-all"
+                      style={checklist[key]?{background:'rgba(22,163,74,0.15)',borderColor:'#16a34a'}:{background:'rgba(0,0,0,0.15)',borderColor:'rgba(255,255,255,0.15)'}}>
                       <input type="checkbox" checked={!!checklist[key]}
                         onChange={e=>setChecklist({...checklist,[key]:e.target.checked})}
                         className="accent-green-600 w-3.5 h-3.5 flex-shrink-0"/>
-                      <span className={`text-xs font-semibold ${checklist[key]?'text-green-700 line-through':'text-gray-700'}`}>{label}</span>
+                      <span className="text-xs font-semibold" style={checklist[key]?{color:'#4ade80',textDecoration:'line-through'}:{color:'rgba(255,255,255,0.7)'}}>{label}</span>
                     </label>
                   ))}
                 </div>
@@ -8086,11 +8087,12 @@ function AdminPlayerDetail({player, onClose, show}) {
                 <div className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold mb-1">Optional</div>
                 <div className="grid grid-cols-3 gap-1">
                   {[['intfg','IntFG'],['auw','Auw'],['mebe','MeBe']].map(([key,label])=>(
-                    <label key={key} className={`flex items-center gap-2 cursor-pointer px-2.5 py-1.5 rounded-lg border transition-all ${checklist[key]?'bg-green-50 border-green-300':'bg-white border-gray-200 hover:border-gray-300'}`}>
+                    <label key={key} className="flex items-center gap-2 cursor-pointer px-2.5 py-1.5 rounded-lg border transition-all"
+                      style={checklist[key]?{background:'rgba(22,163,74,0.15)',borderColor:'#16a34a'}:{background:'rgba(0,0,0,0.15)',borderColor:'rgba(255,255,255,0.15)'}}>
                       <input type="checkbox" checked={!!checklist[key]}
                         onChange={e=>setChecklist({...checklist,[key]:e.target.checked})}
                         className="accent-green-600 w-3.5 h-3.5 flex-shrink-0"/>
-                      <span className={`text-xs font-semibold ${checklist[key]?'text-green-700 line-through':'text-gray-500'}`}>{label}</span>
+                      <span className="text-xs font-semibold" style={checklist[key]?{color:'#4ade80',textDecoration:'line-through'}:{color:'rgba(255,255,255,0.7)'}}>{label}</span>
                     </label>
                   ))}
                 </div>
