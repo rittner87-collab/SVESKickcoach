@@ -9070,6 +9070,7 @@ function VereinskleidungLager({show}) {
   const [tab, setTab] = useState('lager'); // 'lager' | 'bestellungen'
   const [lager, setLager] = useState([]);
   const [bestellungen, setBestellungen] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [lagerLoaded, setLagerLoaded] = useState(false);
 
   // Modals
@@ -9086,7 +9087,10 @@ function VereinskleidungLager({show}) {
     const u2 = col('kleiderbestellungen').orderBy('createdAt','desc').onSnapshot(s=>{
       setBestellungen(s.docs.map(d=>({id:d.id,...d.data()})));
     });
-    return ()=>{u1();u2();};
+    const u3 = col('teams').onSnapshot(s=>{
+      setTeams(s.docs.map(d=>({id:d.id,...d.data()})));
+    });
+    return ()=>{u1();u2();u3();};
   },[]);
 
   // Seed initial data once
@@ -9135,6 +9139,7 @@ function VereinskleidungLager({show}) {
       bestellerName: newBestellung.bestellerName.trim(),
       items: newBestellung.items,
       gesamtbetrag: total,
+      team: newBestellung.team||'',
       notes: newBestellung.notes||'',
       paid: false,
       ausgegeben: false,
@@ -9250,7 +9255,7 @@ function VereinskleidungLager({show}) {
       {tab==='bestellungen' && (
         <div>
           <div className="flex justify-end mb-3">
-            <button onClick={()=>setNewBestellung({bestellerName:'',items:[{name:lager[0]?.name||'',groesse:'M',menge:1,preis:lager[0]?.preis||0}],notes:''})}
+            <button onClick={()=>setNewBestellung({bestellerName:'',team:'',items:[{name:lager[0]?.name||'',groesse:'M',menge:1,preis:lager[0]?.preis||0}],notes:''})}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold"
               style={{background:'#cc0000',color:'#fff'}}>
               + Bestellung erfassen
@@ -9269,6 +9274,7 @@ function VereinskleidungLager({show}) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold text-sm" style={{color:'#fff'}}>{b.bestellerName}</span>
+                      {b.team && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.6)'}}>{b.team}</span>}
                       <span className="text-[10px]" style={{color:'rgba(255,255,255,0.4)'}}>{b.datum}</span>
                       {b.paid && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{background:'rgba(22,163,74,0.2)',color:'#4ade80'}}>✅ Bezahlt</span>}
                       {b.ausgegeben && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{background:'rgba(59,130,246,0.2)',color:'#60a5fa'}}>📦 Ausgegeben</span>}
@@ -9362,6 +9368,15 @@ function VereinskleidungLager({show}) {
                   onChange={e=>setNewBestellung({...newBestellung,bestellerName:e.target.value})}
                   placeholder="z.B. Max Mustermann"
                   className="w-full rounded-lg px-3 py-2 text-sm outline-none dark-input"/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold block mb-1" style={{color:'rgba(255,255,255,0.6)'}}>Team</label>
+                <select value={newBestellung.team||''}
+                  onChange={e=>setNewBestellung({...newBestellung,team:e.target.value})}
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none dark-input">
+                  <option value="">– Kein Team –</option>
+                  {teams.map(t=><option key={t.id} value={t.name||t.id}>{t.name||t.id}</option>)}
+                </select>
               </div>
               <div>
                 <div className="flex items-center justify-between mb-2">
