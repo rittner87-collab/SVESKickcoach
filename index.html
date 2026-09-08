@@ -71,7 +71,11 @@ input::placeholder,textarea::placeholder{color:#9ca3af!important}
 /* Smooth transitions everywhere */
 button{transition-property:color,background-color,border-color,box-shadow,transform,opacity;transition-duration:140ms;transition-timing-function:cubic-bezier(.4,0,.2,1)}
 button:active:not(:disabled){transform:scale(0.96)}
-input,textarea,select{transition:border-color 150ms,box-shadow 150ms,background-color 150ms}
+input,textarea,select{transition:border-color 150ms,box-shadow 150ms,background-color 150ms;color-scheme:dark}
+input[style],textarea[style],select[style]{color:inherit}
+.dark-input{background:rgba(255,255,255,0.08)!important;color:#fff!important;border:1px solid rgba(255,255,255,0.15)!important}
+.dark-input::placeholder{color:rgba(255,255,255,0.3)!important}
+.dark-input option{background:#1a0000;color:#fff}
 input:focus,textarea:focus,select:focus{}
 /* Section page content fade-in */
 main > div > div{animation:fadeUp 0.18s cubic-bezier(.25,.46,.45,.94);color:#fff}
@@ -9047,6 +9051,416 @@ function TrainerPlatzverwaltung({profile, show}) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  ADMIN — VEREINSKLEIDUNG LAGER
+// ═══════════════════════════════════════════════════════════════════
+const SIZES = ['128','140','152','164/XS','176/S','M','L','XL'];
+const INITIAL_LAGER = [
+  {name:'Trikot',     preis:0,  sizes:{128:4,140:2,152:0,'164/XS':0,'176/S':2,M:0,L:0,XL:0}},
+  {name:'Shorts',     preis:0,  sizes:{128:5,140:2,152:2,'164/XS':1,'176/S':0,M:3,L:0,XL:0}},
+  {name:'TR-Jacke',   preis:0,  sizes:{128:0,140:1,152:1,'164/XS':0,'176/S':0,M:0,L:0,XL:0}},
+  {name:'TR-Hose',    preis:0,  sizes:{128:0,140:2,152:0,'164/XS':0,'176/S':0,M:0,L:0,XL:0}},
+  {name:'PR-Jacke',   preis:30, sizes:{128:0,140:0,152:0,'164/XS':0,'176/S':1,M:0,L:0,XL:0}},
+  {name:'PR-Hose',    preis:30, sizes:{128:0,140:0,152:0,'164/XS':0,'176/S':1,M:0,L:0,XL:0}},
+  {name:'TR-Pullover',preis:0,  sizes:{128:0,140:0,152:1,'164/XS':1,'176/S':0,M:0,L:0,XL:0}},
+  {name:'Regenjacke', preis:34.9,sizes:{128:0,140:0,152:0,'164/XS':0,'176/S':0,M:0,L:0,XL:0}},
+  {name:'Poloshirt',  preis:0,  sizes:{128:0,140:0,152:0,'164/XS':0,'176/S':1,M:0,L:0,XL:0}},
+];
+
+function VereinskleidungLager({show}) {
+  const [tab, setTab] = useState('lager'); // 'lager' | 'bestellungen'
+  const [lager, setLager] = useState([]);
+  const [bestellungen, setBestellungen] = useState([]);
+  const [lagerLoaded, setLagerLoaded] = useState(false);
+
+  // Modals
+  const [editItem, setEditItem] = useState(null); // {id?,name,preis,sizes}
+  const [newBestellung, setNewBestellung] = useState(null); // {bestellerName,items:[],notes,paid,ausgegeben}
+  const [deleteId, setDeleteId] = useState(null);
+
+  useEffect(()=>{
+    const u1 = col('kleiderlager').orderBy('createdAt').onSnapshot(s=>{
+      const items = s.docs.map(d=>({id:d.id,...d.data()}));
+      setLager(items);
+      setLagerLoaded(true);
+    });
+    const u2 = col('kleiderbestellungen').orderBy('createdAt','desc').onSnapshot(s=>{
+      setBestellungen(s.docs.map(d=>({id:d.id,...d.data()})));
+    });
+    return ()=>{u1();u2();};
+  },[]);
+
+  // Seed initial data once
+  useEffect(()=>{
+    if(!lagerLoaded) return;
+    if(lager.length === 0) {
+      Promise.all(INITIAL_LAGER.map(item=>col('kleiderlager').add({...item,createdAt:ts()})))
+        .then(()=>show('Lagerdaten initialisiert ✅'));
+    }
+  },[lagerLoaded]);
+
+  const saveLagerItem = async () => {
+    if(!editItem?.name?.trim()) return show('Name fehlt');
+    const sizes = {};
+    SIZES.forEach(s=>{sizes[s]=parseInt(editItem.sizes?.[s]||0);});
+    const data = {name:editItem.name.trim(), preis:parseFloat(editItem.preis)||0, sizes, updatedAt:ts()};
+    if(editItem.id) {
+      await col('kleiderlager').doc(editItem.id).update(data);
+      show('Artikel aktualisiert ✅');
+    } else {
+      await col('kleiderlager').add({...data, createdAt:ts()});
+      show('Artikel hinzugefügt ✅');
+    }
+    setEditItem(null);
+  };
+
+  const deleteLagerItem = async (id) => {
+    await col('kleiderlager').doc(id).delete();
+    show('Artikel gelöscht ✅');
+    setDeleteId(null);
+  };
+
+  const adjustStock = async (itemId, size, delta) => {
+    const item = lager.find(l=>l.id===itemId);
+    if(!item) return;
+    const newVal = Math.max(0, (item.sizes?.[size]||0) + delta);
+    const sizes = {...item.sizes, [size]: newVal};
+    await col('kleiderlager').doc(itemId).update({sizes, updatedAt:ts()});
+  };
+
+  const saveBestellung = async () => {
+    if(!newBestellung?.bestellerName?.trim()) return show('Name fehlt');
+    if(!newBestellung.items?.length) return show('Keine Artikel ausgewählt');
+    const total = newBestellung.items.reduce((s,i)=>s+(i.menge*(i.preis||0)),0);
+    await col('kleiderbestellungen').add({
+      bestellerName: newBestellung.bestellerName.trim(),
+      items: newBestellung.items,
+      gesamtbetrag: total,
+      notes: newBestellung.notes||'',
+      paid: false,
+      ausgegeben: false,
+      datum: new Date().toISOString().split('T')[0],
+      createdAt: ts(),
+    });
+    // Reduce stock
+    for(const item of newBestellung.items) {
+      const lagerItem = lager.find(l=>l.name===item.name);
+      if(lagerItem) {
+        const newVal = Math.max(0,(lagerItem.sizes?.[item.groesse]||0)-item.menge);
+        await col('kleiderlager').doc(lagerItem.id).update({sizes:{...lagerItem.sizes,[item.groesse]:newVal}});
+      }
+    }
+    show('Bestellung gespeichert ✅');
+    setNewBestellung(null);
+  };
+
+  const togglePaid = async (b) => {
+    await col('kleiderbestellungen').doc(b.id).update({paid:!b.paid, updatedAt:ts()});
+  };
+  const toggleAusgegeben = async (b) => {
+    await col('kleiderbestellungen').doc(b.id).update({ausgegeben:!b.ausgegeben, updatedAt:ts()});
+  };
+  const deleteBestellung = async (id) => {
+    await col('kleiderbestellungen').doc(id).delete();
+    show('Bestellung gelöscht ✅');
+  };
+
+  const totalStock = (item) => Object.values(item.sizes||{}).reduce((s,v)=>s+(v||0),0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold" style={{color:'#fff'}}>👕 Vereinskleidung</h2>
+        <div className="flex gap-2">
+          <button onClick={()=>setTab('lager')}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+            style={tab==='lager'?{background:'#cc0000',color:'#fff'}:{background:'rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.7)'}}>
+            📦 Lager
+          </button>
+          <button onClick={()=>setTab('bestellungen')}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+            style={tab==='bestellungen'?{background:'#cc0000',color:'#fff'}:{background:'rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.7)'}}>
+            🛒 Bestellungen ({bestellungen.filter(b=>!b.ausgegeben).length})
+          </button>
+        </div>
+      </div>
+
+      {tab==='lager' && (
+        <div>
+          <div className="flex justify-end mb-3">
+            <button onClick={()=>setEditItem({name:'',preis:0,sizes:{}})}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+              style={{background:'#cc0000',color:'#fff'}}>
+              + Artikel hinzufügen
+            </button>
+          </div>
+          <div className="rounded-xl overflow-hidden" style={{background:'rgba(255,255,255,0.05)'}}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr style={{background:'rgba(0,0,0,0.3)'}}>
+                    <th className="text-left px-3 py-2.5 font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>Artikel</th>
+                    <th className="text-center px-2 py-2.5 font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>Preis</th>
+                    {SIZES.map(s=><th key={s} className="text-center px-2 py-2.5 font-semibold whitespace-nowrap" style={{color:'rgba(255,255,255,0.6)'}}>{s}</th>)}
+                    <th className="text-center px-2 py-2.5 font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>∑</th>
+                    <th className="px-2 py-2.5"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lager.map((item,i)=>(
+                    <tr key={item.id} style={{borderTop:'1px solid rgba(255,255,255,0.05)',background:i%2===0?'transparent':'rgba(255,255,255,0.03)'}}>
+                      <td className="px-3 py-2 font-semibold" style={{color:'#fff'}}>{item.name}</td>
+                      <td className="px-2 py-2 text-center" style={{color:'rgba(255,255,255,0.6)'}}>{item.preis>0?`${item.preis}€`:'-'}</td>
+                      {SIZES.map(size=>{
+                        const qty = item.sizes?.[size]||0;
+                        return (
+                          <td key={size} className="px-1 py-1 text-center">
+                            <div className="flex items-center justify-center gap-0.5">
+                              <button onClick={()=>adjustStock(item.id,size,-1)}
+                                className="w-4 h-4 rounded text-[10px] font-bold transition-colors"
+                                style={{background:'rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.5)'}}>-</button>
+                              <span className="w-5 text-center text-xs font-bold" style={{color:qty===0?'rgba(255,255,255,0.3)':qty<=2?'#f59e0b':'#4ade80'}}>{qty}</span>
+                              <button onClick={()=>adjustStock(item.id,size,1)}
+                                className="w-4 h-4 rounded text-[10px] font-bold transition-colors"
+                                style={{background:'rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.5)'}}>+</button>
+                            </div>
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 py-2 text-center font-bold" style={{color:'#fff'}}>{totalStock(item)}</td>
+                      <td className="px-2 py-2">
+                        <div className="flex gap-1 justify-end">
+                          <button onClick={()=>setEditItem({...item,sizes:{...item.sizes}})}
+                            className="text-[10px] px-1.5 py-0.5 rounded"
+                            style={{background:'rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.6)'}}>✏️</button>
+                          <button onClick={()=>setDeleteId(item.id)}
+                            className="text-[10px] px-1.5 py-0.5 rounded"
+                            style={{background:'rgba(204,0,0,0.2)',color:'rgba(255,100,100,0.8)'}}>🗑</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p className="text-[10px] mt-2" style={{color:'rgba(255,255,255,0.35)'}}>Lagerbestand: grün = verfügbar, gelb = wenig (≤2), grau = ausverkauft</p>
+        </div>
+      )}
+
+      {tab==='bestellungen' && (
+        <div>
+          <div className="flex justify-end mb-3">
+            <button onClick={()=>setNewBestellung({bestellerName:'',items:[{name:lager[0]?.name||'',groesse:'M',menge:1,preis:lager[0]?.preis||0}],notes:''})}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+              style={{background:'#cc0000',color:'#fff'}}>
+              + Bestellung erfassen
+            </button>
+          </div>
+          {bestellungen.length===0 && (
+            <div className="rounded-xl p-8 text-center" style={{background:'rgba(255,255,255,0.05)'}}>
+              <div className="text-3xl mb-2">🛒</div>
+              <div className="text-sm" style={{color:'rgba(255,255,255,0.4)'}}>Noch keine Bestellungen erfasst</div>
+            </div>
+          )}
+          <div className="space-y-2">
+            {bestellungen.map(b=>(
+              <div key={b.id} className="rounded-xl p-3" style={{background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)'}}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm" style={{color:'#fff'}}>{b.bestellerName}</span>
+                      <span className="text-[10px]" style={{color:'rgba(255,255,255,0.4)'}}>{b.datum}</span>
+                      {b.paid && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{background:'rgba(22,163,74,0.2)',color:'#4ade80'}}>✅ Bezahlt</span>}
+                      {b.ausgegeben && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{background:'rgba(59,130,246,0.2)',color:'#60a5fa'}}>📦 Ausgegeben</span>}
+                      {!b.paid && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{background:'rgba(245,158,11,0.2)',color:'#f59e0b'}}>⏳ Offen</span>}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {(b.items||[]).map((item,i)=>(
+                        <span key={i} className="text-[11px] px-2 py-0.5 rounded-full" style={{background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.7)'}}>
+                          {item.name} {item.groesse} ×{item.menge}
+                        </span>
+                      ))}
+                    </div>
+                    {b.notes && <div className="text-[11px] mt-1 italic" style={{color:'rgba(255,255,255,0.4)'}}>{b.notes}</div>}
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <div className="font-bold text-sm" style={{color:b.paid?'#4ade80':'#f59e0b'}}>{b.gesamtbetrag>0?`${b.gesamtbetrag.toFixed(2)}€`:'–'}</div>
+                    <div className="flex gap-1 mt-2 flex-wrap justify-end">
+                      <button onClick={()=>togglePaid(b)}
+                        className="text-[10px] px-2 py-1 rounded-lg font-semibold transition-all"
+                        style={b.paid?{background:'rgba(22,163,74,0.2)',color:'#4ade80'}:{background:'rgba(245,158,11,0.15)',color:'#f59e0b'}}>
+                        {b.paid?'✅ Bezahlt':'💰 Bezahlen'}
+                      </button>
+                      <button onClick={()=>toggleAusgegeben(b)}
+                        className="text-[10px] px-2 py-1 rounded-lg font-semibold transition-all"
+                        style={b.ausgegeben?{background:'rgba(59,130,246,0.2)',color:'#60a5fa'}:{background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.5)'}}>
+                        {b.ausgegeben?'📦 Ausgeg.':'📬 Ausgeben'}
+                      </button>
+                      <button onClick={()=>deleteBestellung(b.id)}
+                        className="text-[10px] px-2 py-1 rounded-lg"
+                        style={{background:'rgba(204,0,0,0.15)',color:'rgba(255,100,100,0.7)'}}>🗑</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Edit/New Artikel Modal */}
+      {editItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
+          <div className="rounded-2xl p-5 w-full max-w-lg max-h-[90vh] overflow-y-auto" style={{background:'#1a0000',border:'1px solid rgba(255,255,255,0.1)'}}>
+            <h3 className="font-bold text-base mb-4" style={{color:'#fff'}}>{editItem.id?'Artikel bearbeiten':'Neuer Artikel'}</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold block mb-1" style={{color:'rgba(255,255,255,0.6)'}}>Bezeichnung</label>
+                <input value={editItem.name} onChange={e=>setEditItem({...editItem,name:e.target.value})}
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none dark-input"/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold block mb-1" style={{color:'rgba(255,255,255,0.6)'}}>Preis (€)</label>
+                <input type="number" step="0.01" value={editItem.preis||0} onChange={e=>setEditItem({...editItem,preis:e.target.value})}
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none dark-input"/>
+              </div>
+              <div>
+                <label className="text-xs font-semibold block mb-2" style={{color:'rgba(255,255,255,0.6)'}}>Bestand nach Größe</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {SIZES.map(size=>(
+                    <div key={size}>
+                      <div className="text-[10px] text-center mb-1" style={{color:'rgba(255,255,255,0.4)'}}>{size}</div>
+                      <input type="number" min="0" value={editItem.sizes?.[size]||0}
+                        onChange={e=>setEditItem({...editItem,sizes:{...editItem.sizes,[size]:parseInt(e.target.value)||0}})}
+                        className="w-full rounded-lg px-2 py-1.5 text-sm text-center outline-none dark-input"/>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={saveLagerItem}
+                className="flex-1 py-2 rounded-xl font-semibold text-sm"
+                style={{background:'#cc0000',color:'#fff'}}>Speichern</button>
+              <button onClick={()=>setEditItem(null)}
+                className="flex-1 py-2 rounded-xl font-semibold text-sm"
+                style={{background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.6)'}}>Abbrechen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Neue Bestellung Modal */}
+      {newBestellung && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
+          <div className="rounded-2xl p-5 w-full max-w-lg max-h-[90vh] overflow-y-auto" style={{background:'#1a0000',border:'1px solid rgba(255,255,255,0.1)'}}>
+            <h3 className="font-bold text-base mb-4" style={{color:'#fff'}}>🛒 Neue Bestellung</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold block mb-1" style={{color:'rgba(255,255,255,0.6)'}}>Name (Besteller)</label>
+                <input value={newBestellung.bestellerName}
+                  onChange={e=>setNewBestellung({...newBestellung,bestellerName:e.target.value})}
+                  placeholder="z.B. Max Mustermann"
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none dark-input"/>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>Artikel</label>
+                  <button onClick={()=>setNewBestellung({...newBestellung,items:[...newBestellung.items,{name:lager[0]?.name||'',groesse:'M',menge:1,preis:lager[0]?.preis||0}]})}
+                    className="text-[11px] px-2 py-0.5 rounded-lg"
+                    style={{background:'rgba(255,255,255,0.1)',color:'rgba(255,255,255,0.7)'}}>+ Artikel</button>
+                </div>
+                <div className="space-y-2">
+                  {newBestellung.items.map((item,i)=>(
+                    <div key={i} className="rounded-lg p-2 space-y-2" style={{background:'rgba(255,255,255,0.05)'}}>
+                      <div className="flex gap-2">
+                        <select value={item.name}
+                          onChange={e=>{
+                            const found=lager.find(l=>l.name===e.target.value);
+                            const items=[...newBestellung.items];
+                            items[i]={...items[i],name:e.target.value,preis:found?.preis||0};
+                            setNewBestellung({...newBestellung,items});
+                          }}
+                          className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none dark-input">
+                          {lager.map(l=><option key={l.id} value={l.name}>{l.name}</option>)}
+                        </select>
+                        <button onClick={()=>{const items=[...newBestellung.items];items.splice(i,1);setNewBestellung({...newBestellung,items});}}
+                          className="text-[11px] px-1.5 rounded-lg"
+                          style={{background:'rgba(204,0,0,0.2)',color:'rgba(255,100,100,0.8)'}}>✕</button>
+                      </div>
+                      <div className="flex gap-2">
+                        <select value={item.groesse}
+                          onChange={e=>{const items=[...newBestellung.items];items[i]={...items[i],groesse:e.target.value};setNewBestellung({...newBestellung,items});}}
+                          className="flex-1 rounded-lg px-2 py-1.5 text-xs outline-none dark-input">
+                          {SIZES.map(s=><option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <div className="flex items-center gap-1">
+                          <button onClick={()=>{const items=[...newBestellung.items];items[i]={...items[i],menge:Math.max(1,items[i].menge-1)};setNewBestellung({...newBestellung,items});}}
+                            className="w-6 h-6 rounded text-sm font-bold" style={{background:'rgba(255,255,255,0.1)',color:'#fff'}}>-</button>
+                          <span className="w-6 text-center text-xs font-bold" style={{color:'#fff'}}>{item.menge}</span>
+                          <button onClick={()=>{const items=[...newBestellung.items];items[i]={...items[i],menge:items[i].menge+1};setNewBestellung({...newBestellung,items});}}
+                            className="w-6 h-6 rounded text-sm font-bold" style={{background:'rgba(255,255,255,0.1)',color:'#fff'}}>+</button>
+                        </div>
+                        <input type="number" step="0.01" value={item.preis||0}
+                          onChange={e=>{const items=[...newBestellung.items];items[i]={...items[i],preis:parseFloat(e.target.value)||0};setNewBestellung({...newBestellung,items});}}
+                          placeholder="Preis"
+                          className="w-20 rounded-lg px-2 py-1.5 text-xs outline-none dark-input"/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold block mb-1" style={{color:'rgba(255,255,255,0.6)'}}>Notiz (optional)</label>
+                <input value={newBestellung.notes||''}
+                  onChange={e=>setNewBestellung({...newBestellung,notes:e.target.value})}
+                  placeholder="z.B. Abholung beim nächsten Training"
+                  className="w-full rounded-lg px-3 py-2 text-sm outline-none dark-input"/>
+              </div>
+              <div className="rounded-lg px-3 py-2 flex justify-between items-center" style={{background:'rgba(255,255,255,0.05)'}}>
+                <span className="text-xs font-semibold" style={{color:'rgba(255,255,255,0.6)'}}>Gesamtbetrag</span>
+                <span className="font-bold text-sm" style={{color:'#f59e0b'}}>
+                  {newBestellung.items.reduce((s,i)=>s+(i.menge*(i.preis||0)),0).toFixed(2)} €
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={saveBestellung}
+                className="flex-1 py-2 rounded-xl font-semibold text-sm"
+                style={{background:'#cc0000',color:'#fff'}}>Bestellung speichern</button>
+              <button onClick={()=>setNewBestellung(null)}
+                className="flex-1 py-2 rounded-xl font-semibold text-sm"
+                style={{background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.6)'}}>Abbrechen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirm */}
+      {deleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.7)'}}>
+          <div className="rounded-2xl p-5 w-full max-w-xs" style={{background:'#1a0000',border:'1px solid rgba(255,255,255,0.1)'}}>
+            <div className="text-center mb-4">
+              <div className="text-3xl mb-2">🗑️</div>
+              <p className="text-sm font-semibold" style={{color:'#fff'}}>Artikel löschen?</p>
+              <p className="text-xs mt-1" style={{color:'rgba(255,255,255,0.5)'}}>Dieser Vorgang kann nicht rückgängig gemacht werden.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>deleteLagerItem(deleteId)}
+                className="flex-1 py-2 rounded-xl font-semibold text-sm"
+                style={{background:'#cc0000',color:'#fff'}}>Löschen</button>
+              <button onClick={()=>setDeleteId(null)}
+                className="flex-1 py-2 rounded-xl font-semibold text-sm"
+                style={{background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.6)'}}>Abbrechen</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  ADMIN — SPONSOREN
 // ═══════════════════════════════════════════════════════════════════
 function AdminSponsoren({show}) {
@@ -9541,6 +9955,7 @@ function AdminApp({profile}) {
       {id:'vereinschat',   icon:'💬',  label:'Vereinschat'},
     ]},
     {section:'Management', items:[
+      {id:'kleiderlager',  icon:'👕',  label:'Vereinskleidung'},
       {id:'busplanung',    icon:'🚌',  label:'Busplanung'},
       {id:'containerplanung', icon:'📦', label:'Containerplanung'},
       {id:'kalender',      icon:'📆',  label:'Vereinskalender'},
@@ -9567,6 +9982,7 @@ function AdminApp({profile}) {
     dokumente:          <AdminDokumente profile={profile} show={show}/>,
     uebungen:           <UebungenDB profile={profile} show={show}/>,
     vereinschat:        <VereinsChat profile={profile}/>,
+    kleiderlager:       <VereinskleidungLager show={show}/>,
     busplanung:         <TrainerBusplanung profile={profile} show={show}/>,
     containerplanung:   <TrainerContainerplanung profile={profile} show={show}/>,
     kalender:           <Vereinskalender profile={profile} canEdit={true}/>,
